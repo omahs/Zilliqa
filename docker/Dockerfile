@@ -209,7 +209,7 @@ RUN update-alternatives --install /usr/bin/python python ${PYTHON3_ENV_PATH}/bin
 
 ENV LD_LIBRARY_PATH=/usr/local/lib
 
-RUN python3 -m pip install --upgrade pip setuptools wheel \
+RUN python3 -m pip install phy --pre --upgrade && python3 -m pip install --upgrade pip setuptools wheel \
   && python3 -m pip install --no-cache-dir -r requirements3.txt
 
 RUN echo '#!/bin/bash\npython3 -m pip "$@"' > /usr/bin/pip3 \
