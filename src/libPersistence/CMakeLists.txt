@@ -6,3 +6,12 @@ target_compile_options(Persistence PRIVATE "-Wno-unused-variable")
 target_compile_options(Persistence PRIVATE "-Wno-unused-parameter")
 target_include_directories (Persistence PUBLIC ${PROJECT_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/src/libPersistence)
 target_link_libraries (Persistence PUBLIC Blockchain Trie Constants BlockChainData TraceableDB protobuf::libprotobuf)
+
+find_package(google_cloud_cpp_storage CONFIG REQUIRED)
+
+add_library(PersistenceDownloader STATIC Downloader.cpp)
+target_include_directories(PersistenceDownloader PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(PersistenceDownloader
+  PUBLIC
+    CURL::libcurl
+    google-cloud-cpp::storage)

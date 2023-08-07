@@ -121,3 +121,8 @@ add_custom_command(TARGET zilliqa
 target_include_directories(multiplier PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(multiplier Network)
 
+add_executable(persistence_downloader PersistenceDownloader.cpp)
+target_link_libraries(persistence_downloader
+  PRIVATE
+    Boost::program_options
+    PersistenceDownloader)
