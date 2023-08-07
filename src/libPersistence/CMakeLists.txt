@@ -14,4 +14,5 @@ target_include_directories(PersistenceDownloader PUBLIC ${PROJECT_SOURCE_DIR}/sr
 target_link_libraries(PersistenceDownloader
   PUBLIC
     CURL::libcurl
-    google-cloud-cpp::storage)
+    google-cloud-cpp::storage
+    Boost::thread)

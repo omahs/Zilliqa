@@ -46,7 +46,12 @@ find_package(Protobuf REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-find_package(Boost COMPONENTS system unit_test_framework program_options REQUIRED)
+find_package(Boost COMPONENTS system unit_test_framework program_options thread REQUIRED)
+add_compile_definitions(
+  BOOST_THREAD_PROVIDES_FUTURE
+  BOOST_THREAD_PROVIDES_FUTURE_CONTINUATION
+  BOOST_THREAD_PROVIDES_EXECUTORS
+  BOOST_THREAD_USES_MOVE)
 
 find_package(Schnorr REQUIRED)
 find_package(CryptoUtils REQUIRED)

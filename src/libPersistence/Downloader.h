@@ -20,14 +20,34 @@
 
 #include "google/cloud/storage/client.h"
 
+#include <boost/thread/executors/basic_thread_pool.hpp>
+
+#include <filesystem>
+
+namespace gcs = ::google::cloud::storage;
+
 namespace zil {
 namespace persistence {
 
 class Downloader {
  public:
-  Downloader();
+  template <typename StoragePathT, typename BucketNameT, typename TestnetNameT>
+  Downloader(StoragePathT&& storagePath, BucketNameT&& bucketName,
+             TestnetNameT&& testnetName, unsigned int threadCount)
+      : m_storagePath{std::forward<StoragePathT>(storagePath)},
+        m_bucketName{std::forward<BucketNameT>(bucketName)},
+        m_testnetName{std::forward<TestnetNameT>(testnetName)},
+        m_threadPool{threadCount} {}
+
+  void start();
 
  private:
+  std::filesystem::path m_storagePath;
+  std::string m_bucketName;
+  std::string m_testnetName;
+
+  gcs::Client m_client;
+  boost::executors::basic_thread_pool m_threadPool;
 };
 
 }  // namespace persistence
