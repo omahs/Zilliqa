@@ -155,6 +155,11 @@ void Downloader::DownloadPersistenceAndStateDeltas() {
 
   auto bucketObjects = RetrieveBucketObjects(PersistenceURLPrefix());
   DownloadBucketObjects(bucketObjects, StoragePath());
+
+  std::filesystem::remove(StateDeltaPath(), errorCode);
+  std::filesystem::create_directories(StateDeltaPath(), errorCode);
+  bucketObjects = RetrieveBucketObjects(StateDeltaURLPrefix());
+  DownloadBucketObjects(bucketObjects, StateDeltaPath());
 }
 
 std::vector<gcs::ListObjectsReader::value_type>
@@ -170,6 +175,11 @@ Downloader::RetrieveBucketObjects(const std::string& url) {
       continue;
     }
 
+    // TODO: exclude if (not (Exclude_txnBodies and "txEpochs" in key_url) and
+    // not (Exclude_txnBodies and "txBodies" in key_url) and not
+    // (Exclude_microBlocks and "microBlock" in key_url) and not
+    // (Exclude_minerInfo and "minerInfo" in key_url) and not
+    // ("diff_persistence" in key_url)):
     bucketObjects.emplace_back(std::move(bucketObject));
   }
 

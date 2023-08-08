@@ -58,9 +58,14 @@ class Downloader {
     return "incremental/" + m_testnetName + '/';
   }
 
+  std::string StateDeltaURLPrefix() const {
+    return "statedelta/" + m_testnetName + '/';
+  }
+
   auto StoragePath() const { return m_storagePath; }
   auto PersistencePath() const { return m_storagePath / "persistence"; }
   auto PersistenceDiffPath() const { return m_storagePath / "persistenceDiff"; }
+  auto StateDeltaPath() const { return m_storagePath / "StateDeltaFromS3"; }
 
   bool IsUploadOngoing() const;
   std::optional<uint64_t> GetCurrentTxBlkNum() const;
