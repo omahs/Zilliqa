@@ -5,6 +5,7 @@
     "jsoncpp",
     "openssl",
     "protobuf",
+    "libarchive",
     "boost-asio",
     "boost-beast",
     "boost-bimap",

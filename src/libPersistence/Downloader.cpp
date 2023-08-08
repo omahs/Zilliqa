@@ -1,5 +1,7 @@
 #include "libPersistence/Downloader.h"
 
+#include <archive.h>
+#include <archive_entry.h>
 #include <crc32c/crc32c.h>
 
 #include <boost/algorithm/string.hpp>
@@ -24,10 +26,117 @@ std::string decode64(const std::string& val) {
       [](char c) { return c == '\0'; });
 }
 
+int writeEntry(archive* inArchive, archive* outArchive) {
+  for (;;) {
+    const void* buff = nullptr;
+    std::size_t size = 0;
+    la_int64_t offset = 0;
+    auto result = archive_read_data_block(inArchive, &buff, &size, &offset);
+    if (result == ARCHIVE_EOF) return (ARCHIVE_OK);
+    if (result < ARCHIVE_OK) return result;
+    result = archive_write_data_block(outArchive, buff, size, offset);
+    if (result < ARCHIVE_OK) {
+      std::cerr << archive_error_string(outArchive);
+      return result;
+    }
+  }
+}
+
+void extract(const std::filesystem::path& filePath) {
+  auto inArchiveDeleter = [](archive* ptr) {
+    archive_read_close(ptr);
+    archive_read_free(ptr);
+  };
+  std::unique_ptr<archive, decltype(inArchiveDeleter)> inArchive{
+      archive_read_new(), inArchiveDeleter};
+
+  archive_read_support_format_all(inArchive.get());
+  archive_read_support_filter_all(inArchive.get());
+
+  auto outArchiveDeleter = [](archive* ptr) {
+    archive_write_close(ptr);
+    archive_write_free(ptr);
+  };
+  std::unique_ptr<archive, decltype(outArchiveDeleter)> outArchive{
+      archive_write_disk_new(), outArchiveDeleter};
+
+  /* Select which attributes we want to restore. */
+  int flags = ARCHIVE_EXTRACT_TIME;
+  flags |= ARCHIVE_EXTRACT_PERM;
+  flags |= ARCHIVE_EXTRACT_ACL;
+  flags |= ARCHIVE_EXTRACT_FFLAGS;
+
+  archive_write_disk_set_options(outArchive.get(), flags);
+  archive_write_disk_set_standard_lookup(outArchive.get());
+
+  const constexpr std::size_t BLOCK_SIZE = 10240;
+  if (archive_read_open_filename(inArchive.get(), filePath.c_str(),
+                                 BLOCK_SIZE) != 0) {
+    std::cerr << "Failed to open file " << filePath << std::endl;
+    return;
+  }
+
+  for (;;) {
+    archive_entry* entry = nullptr;
+    auto result = archive_read_next_header(inArchive.get(), &entry);
+    if (result == ARCHIVE_EOF) {
+      return;
+    }
+
+    if (result < ARCHIVE_OK) {
+      std::cerr << archive_error_string(inArchive.get());
+    }
+
+    if (result < ARCHIVE_WARN) {
+      exit(1);
+    }
+
+    result = archive_write_header(outArchive.get(), entry);
+    if (result < ARCHIVE_OK) {
+      std::cerr << archive_error_string(outArchive.get());
+    } else if (archive_entry_size(entry) > 0) {
+      result = writeEntry(inArchive.get(), outArchive.get());
+      if (result < ARCHIVE_OK) {
+        std::cerr << archive_error_string(outArchive.get());
+      }
+      if (result < ARCHIVE_WARN) {
+        exit(1);
+      }
+    }
+    result = archive_write_finish_entry(outArchive.get());
+    if (result < ARCHIVE_OK) {
+      std::cerr << archive_error_string(outArchive.get());
+    }
+    if (result < ARCHIVE_WARN) {
+      exit(1);
+    }
+  }
+}
+
+void extractGZippedFiles(const std::filesystem::path& dirPath) {
+  std::error_code errorCode;
+  std::filesystem::current_path(dirPath, errorCode);
+  std::vector<std::filesystem::directory_entry> dirEntries;
+  std::copy_if(std::filesystem::directory_iterator(dirPath),
+               std::filesystem::directory_iterator(),
+               std::back_inserter(dirEntries),
+               [](const auto& dirEntry) { return dirEntry.is_regular_file(); });
+
+  for (const auto& file : dirEntries) {
+    const auto& filePath = file.path();
+    if (filePath.string().ends_with("tar.gz")) {
+      extract(filePath);
+    }
+
+    std::filesystem::remove(filePath);
+  }
+}
+
 void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
                           const std::string& objectName,
                           const std::filesystem::path& outputPath,
-                          const std::string& expectedCrc32c) {
+                          const std::string& expectedCrc32c,
+                          bool extractCompressed = false) {
   auto inputStream = client.ReadObject(bucketName, objectName);
   if (!inputStream) {
     std::cerr << "Can't download bucket object (" << objectName << ") in "
@@ -80,6 +189,11 @@ void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
               << "; skipping..." << std::endl;
     return;
   }
+
+#if 0
+  if (!extractCompressed || !fileName.string().ends_with("tar.gz")) return;
+  extract(filePath);
+#endif
 }
 
 }  // namespace
@@ -159,7 +273,8 @@ void Downloader::DownloadPersistenceAndStateDeltas() {
   std::filesystem::remove(StateDeltaPath(), errorCode);
   std::filesystem::create_directories(StateDeltaPath(), errorCode);
   bucketObjects = RetrieveBucketObjects(StateDeltaURLPrefix());
-  DownloadBucketObjects(bucketObjects, StateDeltaPath());
+  DownloadBucketObjects(bucketObjects, StateDeltaPath(), true);
+  extractGZippedFiles(StateDeltaPath());
 }
 
 std::vector<gcs::ListObjectsReader::value_type>
@@ -188,7 +303,8 @@ Downloader::RetrieveBucketObjects(const std::string& url) {
 
 void Downloader::DownloadBucketObjects(
     const std::vector<gcs::ListObjectsReader::value_type>& bucketObjects,
-    const std::filesystem::path& outputPath) {
+    const std::filesystem::path& outputPath,
+    bool extractCompressed /*= false*/) {
   for (const auto& bucketObject : bucketObjects) {
     if (!bucketObject) {
       std::cerr << "Can't download bucket object " << bucketObject->name()
@@ -200,9 +316,10 @@ void Downloader::DownloadBucketObjects(
     // according to Google.
     m_threadPool.submit([client = m_client, bucketName = m_bucketName,
                          objectName = bucketObject->name(), outputPath,
-                         etag = bucketObject->crc32c()]() mutable {
+                         extractCompressed,
+                         crc32c = bucketObject->crc32c()]() mutable {
       DownloadBucketObject(std::move(client), bucketName, objectName,
-                           outputPath, etag);
+                           outputPath, crc32c, extractCompressed);
     });
   }
 }

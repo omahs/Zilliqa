@@ -8,6 +8,7 @@ target_include_directories (Persistence PUBLIC ${PROJECT_SOURCE_DIR}/src ${CMAKE
 target_link_libraries (Persistence PUBLIC Blockchain Trie Constants BlockChainData TraceableDB protobuf::libprotobuf)
 
 find_package(google_cloud_cpp_storage CONFIG REQUIRED)
+find_package(LibArchive REQUIRED)
 
 add_library(PersistenceDownloader STATIC Downloader.cpp)
 target_include_directories(PersistenceDownloader PUBLIC ${PROJECT_SOURCE_DIR}/src)
@@ -16,4 +17,5 @@ target_link_libraries(PersistenceDownloader
     google-cloud-cpp::storage
   PRIVATE
     CURL::libcurl
+    LibArchive::LibArchive
     Boost::thread)

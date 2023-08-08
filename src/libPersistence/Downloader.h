@@ -75,7 +75,7 @@ class Downloader {
 
   void DownloadBucketObjects(
       const std::vector<gcs::ListObjectsReader::value_type>& bucketObjects,
-      const std::filesystem::path& outputPath);
+      const std::filesystem::path& outputPath, bool extractCompressed = false);
 };
 
 }  // namespace persistence
