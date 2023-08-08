@@ -13,6 +13,7 @@ add_library(PersistenceDownloader STATIC Downloader.cpp)
 target_include_directories(PersistenceDownloader PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(PersistenceDownloader
   PUBLIC
-    CURL::libcurl
     google-cloud-cpp::storage
+  PRIVATE
+    CURL::libcurl
     Boost::thread)

@@ -1,5 +1,11 @@
 #include "libPersistence/Downloader.h"
 
+#include <crc32c/crc32c.h>
+
+#include <boost/algorithm/string.hpp>
+#include <boost/archive/iterators/binary_from_base64.hpp>
+#include <boost/archive/iterators/transform_width.hpp>
+
 #include <fstream>
 
 namespace zil {
@@ -9,10 +15,19 @@ namespace {
 const constexpr std::chrono::seconds WAIT_INTERVAL{2};
 const constexpr std::size_t FILE_CHUNK_SIZE_BYTES{512 * 1024};
 
-void DownloadBucketObject(/*gcs::Client client,*/ const std::string& bucketName,
+std::string decode64(const std::string& val) {
+  using namespace boost::archive::iterators;
+  using It =
+      transform_width<binary_from_base64<std::string::const_iterator>, 8, 6>;
+  return boost::algorithm::trim_right_copy_if(
+      std::string(It(std::begin(val)), It(std::end(val))),
+      [](char c) { return c == '\0'; });
+}
+
+void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
                           const std::string& objectName,
-                          const std::filesystem::path& outputPath) {
-  gcs::Client client;
+                          const std::filesystem::path& outputPath,
+                          const std::string& expectedCrc32c) {
   auto inputStream = client.ReadObject(bucketName, objectName);
   if (!inputStream) {
     std::cerr << "Can't download bucket object (" << objectName << ") in "
@@ -41,6 +56,9 @@ void DownloadBucketObject(/*gcs::Client client,*/ const std::string& bucketName,
     return;
   }
 
+  // Calculate the CRC32c (Google's recommended validation algorithm) and make
+  // sure we get the same value.
+  uint32_t crc32c = 0;
   std::array<char, FILE_CHUNK_SIZE_BYTES> chunk = {};
   while (inputStream) {
     inputStream.read(chunk.data(), chunk.size());
@@ -49,7 +67,18 @@ void DownloadBucketObject(/*gcs::Client client,*/ const std::string& bucketName,
       break;
     }
 
+    crc32c = crc32c::Extend(
+        crc32c, reinterpret_cast<const uint8_t*>(chunk.data()), bytesRead);
     outputStream.write(chunk.data(), bytesRead);
+  }
+
+  auto decodedCrc32c = decode64(expectedCrc32c);
+  if (decodedCrc32c.size() != sizeof(crc32c) ||
+      !std::equal(std::rbegin(decodedCrc32c), std::rend(decodedCrc32c),
+                  reinterpret_cast<char*>(&crc32c))) {
+    std::cerr << "CRC32C mismatch for " << objectName << " in " << bucketName
+              << "; skipping..." << std::endl;
+    return;
   }
 }
 
@@ -151,13 +180,19 @@ void Downloader::DownloadBucketObjects(
     const std::vector<gcs::ListObjectsReader::value_type>& bucketObjects,
     const std::filesystem::path& outputPath) {
   for (const auto& bucketObject : bucketObjects) {
+    if (!bucketObject) {
+      std::cerr << "Can't download bucket object " << bucketObject->name()
+                << "; skipping..." << std::endl;
+      continue;
+    }
+
     // IMPORTANT: copy the client; this is guaranteed to be thread-safe
     // according to Google.
-    m_threadPool.submit([/*client = m_client,*/ bucketName = m_bucketName,
-                         objectName = bucketObject->name(),
-                         outputPath]() mutable {
-      DownloadBucketObject(/*std::move(client),*/ bucketName, objectName,
-                           outputPath);
+    m_threadPool.submit([client = m_client, bucketName = m_bucketName,
+                         objectName = bucketObject->name(), outputPath,
+                         etag = bucketObject->crc32c()]() mutable {
+      DownloadBucketObject(std::move(client), bucketName, objectName,
+                           outputPath, etag);
     });
   }
 }

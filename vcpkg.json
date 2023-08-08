@@ -9,6 +9,7 @@
     "boost-beast",
     "boost-bimap",
     "boost-compute",
+    "boost-crc",
     "boost-multiprecision",
     "boost-program-options",
     "boost-process",

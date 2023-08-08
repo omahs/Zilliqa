@@ -7,7 +7,7 @@
 namespace po = boost::program_options;
 
 namespace {
-const constexpr std::size_t DEFAULT_THREAD_COUNT = 50;
+const constexpr std::size_t DEFAULT_THREAD_COUNT = 10;
 }
 
 int main(int argc, char* argv[]) {
