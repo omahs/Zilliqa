@@ -44,7 +44,13 @@
       ]
     },
     "secp256k1",
-    "google-cloud-cpp"
+    {
+      "name": "google-cloud-cpp",
+      "default-features": false,
+      "features": [
+        "storage"
+      ]
+    }
   ],
   "builtin-baseline": "9d47b24eacbd1cd94f139457ef6cd35e5d92cc84",
   "overrides": [

@@ -18,11 +18,14 @@
 #ifndef ZILLIQA_SRC_LIBPERSISTENCE_DOWNLOADER_H_
 #define ZILLIQA_SRC_LIBPERSISTENCE_DOWNLOADER_H_
 
+#include "common/Common.h"
+
 #include "google/cloud/storage/client.h"
 
 #include <boost/thread/executors/basic_thread_pool.hpp>
 
 #include <filesystem>
+#include <optional>
 
 namespace gcs = ::google::cloud::storage;
 
@@ -31,6 +34,8 @@ namespace persistence {
 
 class Downloader {
  public:
+  ~Downloader() noexcept;
+
   template <typename StoragePathT, typename BucketNameT, typename TestnetNameT>
   Downloader(StoragePathT&& storagePath, BucketNameT&& bucketName,
              TestnetNameT&& testnetName, unsigned int threadCount)
@@ -39,15 +44,33 @@ class Downloader {
         m_testnetName{std::forward<TestnetNameT>(testnetName)},
         m_threadPool{threadCount} {}
 
-  void start();
+  void Start();
 
  private:
-  std::filesystem::path m_storagePath;
-  std::string m_bucketName;
-  std::string m_testnetName;
+  const std::filesystem::path m_storagePath;
+  const std::string m_bucketName;
+  const std::string m_testnetName;
 
-  gcs::Client m_client;
+  mutable gcs::Client m_client;
   boost::executors::basic_thread_pool m_threadPool;
+
+  std::string PersistenceURLPrefix() const {
+    return "incremental/" + m_testnetName + '/';
+  }
+
+  auto StoragePath() const { return m_storagePath; }
+  auto PersistencePath() const { return m_storagePath / "persistence"; }
+  auto PersistenceDiffPath() const { return m_storagePath / "persistenceDiff"; }
+
+  bool IsUploadOngoing() const;
+  std::optional<uint64_t> GetCurrentTxBlkNum() const;
+  void DownloadPersistenceAndStateDeltas();
+  std::vector<gcs::ListObjectsReader::value_type> RetrieveBucketObjects(
+      const std::string& url);
+
+  void DownloadBucketObjects(
+      const std::vector<gcs::ListObjectsReader::value_type>& bucketObjects,
+      const std::filesystem::path& outputPath);
 };
 
 }  // namespace persistence

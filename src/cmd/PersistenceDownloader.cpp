@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
         std::move(storagePath), std::move(bucketName), std::move(testnetName),
         threadCount};
 
-    downloader.start();
+    downloader.Start();
 
   } catch (std::exception& e) {
     std::cerr << e.what() << std::endl;
