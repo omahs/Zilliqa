@@ -9,6 +9,7 @@
 #include <boost/archive/iterators/transform_width.hpp>
 
 #include <fstream>
+#include <regex>
 
 namespace zil {
 namespace persistence {
@@ -203,6 +204,26 @@ std::optional<std::filesystem::path> DownloadBucketObject(
   return filePath;
 }
 
+/*
+  When the DS epoch crossover happens, currTxBlk and newTxBlk will be from
+  different DSepoch. As per the current behavior, Persistence is overwritten
+  after every NUM_DSBLOCK * NUM_FINAL_BLOCK_PER_POW. This function ensures that
+  if currTxBlk DS epoch is different from the persistence overwritten DS epoch,
+  then the node restart the download again. If we don't restart the download, In
+  such a case, the node will receive 404 during persistence download and the
+  node can get leveldb related issues.
+*/
+bool IsDownloadRestartRequired(uint64_t currTxBlk, uint64_t latestTxBlk,
+                               unsigned int NUM_DSBLOCK,
+                               unsigned int NUM_FINAL_BLOCK_PER_POW) {
+#if 0
+    // print("currTxBlk = "+ str(currTxBlk) + " latestTxBlk = "+ str(latestTxBlk) + " NUM_DSBLOCK = " +str(NUM_DSBLOCK))
+    if((latestTxBlk // (NUM_DSBLOCK * NUM_FINAL_BLOCK_PER_POW)) != (currTxBlk // (NUM_DSBLOCK * NUM_FINAL_BLOCK_PER_POW))):
+        return true;
+#endif
+  return false;
+}
+
 }  // namespace
 
 Downloader::~Downloader() noexcept {
@@ -214,20 +235,43 @@ Downloader::~Downloader() noexcept {
 void Downloader::Start() {
   // TODO: download static DB
 
-  while (IsUploadOngoing()) {
-    std::cout << "Waiting for persistence upload to finish..." << std::endl;
-    std::this_thread::sleep_for(WAIT_INTERVAL);
-  }
+  while (true) {
+    if (IsUploadOngoing()) {
+      std::cout << "Waiting for persistence upload to finish..." << std::endl;
+      std::this_thread::sleep_for(WAIT_INTERVAL);
+      continue;
+    }
 
-  std::optional<uint64_t> currentTxBlk;
-  for (currentTxBlk = GetCurrentTxBlkNum(); !currentTxBlk;
-       currentTxBlk = GetCurrentTxBlkNum()) {
-    std::cerr << "No current Tx block found..." << std::endl;
-    std::this_thread::sleep_for(WAIT_INTERVAL);
-  }
+    auto currentTxBlk = GetCurrentTxBlkNum();
+    if (!currentTxBlk) {
+      std::cerr << "No current Tx block found..." << std::endl;
+      std::this_thread::sleep_for(WAIT_INTERVAL);
+      continue;
+    }
 
-  std::cout << "Current Tx block: " << *currentTxBlk << std::endl;
-  DownloadPersistenceAndStateDeltas();
+    std::cout << "Current Tx block: " << *currentTxBlk << std::endl;
+    DownloadPersistenceAndStateDeltas();
+
+    auto newTxBlk = GetCurrentTxBlkNum();
+    if (!newTxBlk || *newTxBlk < *currentTxBlk) {
+      std::cerr << "Inconsistent Tx block numbers; quitting..." << std::endl;
+      return;
+    }
+
+    if (*newTxBlk == *currentTxBlk) {
+      return;
+    }
+
+    // TODO: retrieve NUM_DSBLOCK & NUM_FINAL_BLOCK_PER_POW
+    if (IsDownloadRestartRequired(*currentTxBlk, *newTxBlk, 0, 0)) {
+      std::cout << "Redownload persistence as the persistence is overwritten"
+                << std::endl;
+      continue;
+    }
+
+    DownloadPersistenceDiff(*currentTxBlk + 1, *newTxBlk + 1);
+    DownloadStateDeltaDiff(*currentTxBlk + 1, *newTxBlk + 1);
+  }
 }
 
 bool Downloader::IsUploadOngoing() const {
@@ -293,16 +337,82 @@ void Downloader::DownloadPersistenceAndStateDeltas() {
                       std::ranges::end(persistenceFutures));
 }
 
-std::vector<gcs::ListObjectsReader::value_type>
-Downloader::RetrieveBucketObjects(const std::string& url) {
-  auto listObjectsReader =
-      m_client.ListObjects(m_bucketName, gcs::Prefix(PersistenceURLPrefix()));
+void Downloader::DownloadDiffs(uint64_t fromTxBlk, uint64_t toTxBlk,
+                               const std::string& prefix,
+                               const std::string& fileNamePrefix,
+                               const std::filesystem::path& downloadPath) {
+  auto bucketObjects = RetrieveBucketObjects(prefix + fileNamePrefix);
+  bucketObjects.erase(
+      std::remove_if(
+          std::ranges::begin(bucketObjects), std::ranges::end(bucketObjects),
+          [fromTxBlk, toTxBlk, &fileNamePrefix](const auto& bucketObject) {
+            if (!bucketObject) return false;
 
-  std::vector<gcs::ListObjectsReader::value_type> bucketObjects;
+            // Extract the block number from the object name and handle if it's
+            // in the correct range.
+            std::smatch match;
+            const auto& objectName = bucketObject->name();
+            if (!std::regex_match(objectName, match,
+                                  std::regex("^.*\\/" + fileNamePrefix +
+                                             "([0-9]+)\\.tar\\.gz$"))) {
+              return false;
+            }
+
+            assert(match.size() == 2);
+            auto matchIter = std::ranges::next(std::ranges::begin(match));
+            auto txBlk = std::stoull(matchIter->str());
+            return (txBlk >= fromTxBlk && txBlk < toTxBlk);
+          }),
+      std::ranges::end(bucketObjects));
+
+  auto diffFutures = DownloadBucketObjects(bucketObjects, downloadPath);
+  boost::wait_for_all(std::ranges::begin(diffFutures),
+                      std::ranges::end(diffFutures));
+
+  ExtractGZippedFiles(downloadPath);
+}
+
+void Downloader::DownloadPersistenceDiff(uint64_t fromTxBlk, uint64_t toTxBlk) {
+  std::error_code errorCode;
+  std::filesystem::remove(PersistenceDiffPath(), errorCode);
+  std::filesystem::create_directories(PersistenceDiffPath(), errorCode);
+
+  DownloadDiffs(fromTxBlk, toTxBlk, PersistenceURLPrefix(), "diff_persistence_",
+                PersistenceDiffPath());
+
+  for (const auto& dirEntry :
+       std::filesystem::directory_iterator(PersistenceDiffPath())) {
+    if (!dirEntry.is_directory()) {
+      continue;
+    }
+
+    std::filesystem::copy(dirEntry, PersistencePath(),
+                          std::filesystem::copy_options::recursive, errorCode);
+    std::cout << "Copied " << dirEntry.path() << " to " << PersistencePath()
+              << " (" << errorCode << ')' << std::endl;
+  }
+
+  std::filesystem::remove_all(PersistenceDiffPath(), errorCode);
+}
+
+void Downloader::DownloadStateDeltaDiff(uint64_t fromTxBlk, uint64_t toTxBlk) {
+  std::error_code errorCode;
+  std::filesystem::create_directories(StateDeltaPath(), errorCode);
+
+  DownloadDiffs(fromTxBlk, toTxBlk, StateDeltaURLPrefix(), "stateDelta_",
+                StateDeltaPath());
+}
+
+std::vector<gcs::ListObjectsReader::value_type>
+Downloader::RetrieveBucketObjects(const std::string& prefix) {
+  std::vector<gcs::ListObjectsReader::value_type> result;
+
+  auto listObjectsReader =
+      m_client.ListObjects(m_bucketName, gcs::Prefix(prefix));
   for (auto& bucketObject : listObjectsReader) {
     if (!bucketObject) {
       std::cerr << "Bad bucket object (" << bucketObject->name() << ") in "
-                << m_bucketName << '/' + PersistenceURLPrefix() << std::endl;
+                << m_bucketName << '/' + prefix << std::endl;
       continue;
     }
 
@@ -311,10 +421,10 @@ Downloader::RetrieveBucketObjects(const std::string& url) {
     // (Exclude_microBlocks and "microBlock" in key_url) and not
     // (Exclude_minerInfo and "minerInfo" in key_url) and not
     // ("diff_persistence" in key_url)):
-    bucketObjects.emplace_back(std::move(bucketObject));
+    result.emplace_back(std::move(bucketObject));
   }
 
-  return bucketObjects;
+  return result;
 }
 
 Downloader::DownloadFutures Downloader::DownloadBucketObjects(
@@ -329,9 +439,9 @@ Downloader::DownloadFutures Downloader::DownloadBucketObjects(
       continue;
     }
 
-    // IMPORTANT: copy the client; this is guaranteed to be thread-safe
-    // according to Google.
     auto future = boost::async(
+        // IMPORTANT: copy the client; this is guaranteed to be thread-safe
+        // according to Google.
         m_threadPool, [client = m_client, bucketName = m_bucketName,
                        objectName = bucketObject->name(), outputPath,
                        crc32c = bucketObject->crc32c()]() mutable {

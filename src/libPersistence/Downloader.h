@@ -71,8 +71,14 @@ class Downloader {
   bool IsUploadOngoing() const;
   std::optional<uint64_t> GetCurrentTxBlkNum() const;
   void DownloadPersistenceAndStateDeltas();
+  void DownloadDiffs(uint64_t fromTxBlk, uint64_t toTxBlk,
+                     const std::string& prefix,
+                     const std::string& fileNamePrefix,
+                     const std::filesystem::path& downloadPath);
+  void DownloadPersistenceDiff(uint64_t fromTxBlk, uint64_t toTxBlk);
+  void DownloadStateDeltaDiff(uint64_t fromTxBlk, uint64_t toTxBlk);
   std::vector<gcs::ListObjectsReader::value_type> RetrieveBucketObjects(
-      const std::string& url);
+      const std::string& prefix);
 
   using DownloadFutures = std::vector<boost::future<
       std::pair<std::string, std::optional<std::filesystem::path> > > >;
