@@ -143,10 +143,10 @@ void ExtractGZippedFiles(const std::filesystem::path& dirPath) {
   }
 }
 
-void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
-                          const std::string& objectName,
-                          const std::filesystem::path& outputPath,
-                          const std::string& expectedCrc32c) {
+std::optional<std::filesystem::path> DownloadBucketObject(
+    gcs::Client client, const std::string& bucketName,
+    const std::string& objectName, const std::filesystem::path& outputPath,
+    const std::string& expectedCrc32c) {
   auto inputStream = client.ReadObject(bucketName, objectName);
   if (!inputStream) {
     std::cerr << "Can't download bucket object (" << objectName << ") in "
@@ -157,7 +157,7 @@ void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
   if (!filePath.has_filename()) {
     std::cerr << "Can't infer file name for " << objectName << " in bucket "
               << bucketName << "; skipping..." << std::endl;
-    return;
+    return std::nullopt;
   }
 
   // Skip the testnet name part in the URL path
@@ -172,7 +172,7 @@ void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
   if (!outputStream) {
     std::cerr << "Can't open " << filePath << " for writing; skipping..."
               << std::endl;
-    return;
+    return std::nullopt;
   }
 
   // Calculate the CRC32c (Google's recommended validation algorithm) and make
@@ -197,8 +197,10 @@ void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
                   reinterpret_cast<char*>(&crc32c))) {
     std::cerr << "CRC32C mismatch for " << objectName << " in " << bucketName
               << "; skipping..." << std::endl;
-    return;
+    return std::nullopt;
   }
+
+  return filePath;
 }
 
 }  // namespace
@@ -273,13 +275,22 @@ void Downloader::DownloadPersistenceAndStateDeltas() {
   std::filesystem::create_directories(StoragePath(), errorCode);
 
   auto bucketObjects = RetrieveBucketObjects(PersistenceURLPrefix());
-  DownloadBucketObjects(bucketObjects, StoragePath());
+  auto persistenceFutures = DownloadBucketObjects(bucketObjects, StoragePath());
 
   std::filesystem::remove(StateDeltaPath(), errorCode);
   std::filesystem::create_directories(StateDeltaPath(), errorCode);
   bucketObjects = RetrieveBucketObjects(StateDeltaURLPrefix());
-  DownloadBucketObjects(bucketObjects, StateDeltaPath());
+  auto stateDeltaFutures =
+      DownloadBucketObjects(bucketObjects, StateDeltaPath());
+
+  // Wait for state deltas to finish downloading first before
+  // extracting the tar.gz downloaded files.
+  boost::wait_for_all(std::ranges::begin(stateDeltaFutures),
+                      std::ranges::end(stateDeltaFutures));
   ExtractGZippedFiles(StateDeltaPath());
+
+  boost::wait_for_all(std::ranges::begin(persistenceFutures),
+                      std::ranges::end(persistenceFutures));
 }
 
 std::vector<gcs::ListObjectsReader::value_type>
@@ -306,9 +317,11 @@ Downloader::RetrieveBucketObjects(const std::string& url) {
   return bucketObjects;
 }
 
-void Downloader::DownloadBucketObjects(
+Downloader::DownloadFutures Downloader::DownloadBucketObjects(
     const std::vector<gcs::ListObjectsReader::value_type>& bucketObjects,
     const std::filesystem::path& outputPath) {
+  DownloadFutures result;
+  result.reserve(bucketObjects.size());
   for (const auto& bucketObject : bucketObjects) {
     if (!bucketObject) {
       std::cerr << "Can't download bucket object " << bucketObject->name()
@@ -318,13 +331,19 @@ void Downloader::DownloadBucketObjects(
 
     // IMPORTANT: copy the client; this is guaranteed to be thread-safe
     // according to Google.
-    m_threadPool.submit([client = m_client, bucketName = m_bucketName,
-                         objectName = bucketObject->name(), outputPath,
-                         crc32c = bucketObject->crc32c()]() mutable {
-      DownloadBucketObject(std::move(client), bucketName, objectName,
-                           outputPath, crc32c);
-    });
+    auto future = boost::async(
+        m_threadPool, [client = m_client, bucketName = m_bucketName,
+                       objectName = bucketObject->name(), outputPath,
+                       crc32c = bucketObject->crc32c()]() mutable {
+          auto filePath = DownloadBucketObject(std::move(client), bucketName,
+                                               objectName, outputPath, crc32c);
+          return std::make_pair(std::move(bucketName), std::move(filePath));
+        });
+
+    result.emplace_back(std::move(future));
   }
+
+  return result;
 }
 
 }  // namespace persistence

@@ -23,6 +23,7 @@
 #include "google/cloud/storage/client.h"
 
 #include <boost/thread/executors/basic_thread_pool.hpp>
+#include <boost/thread/future.hpp>
 
 #include <filesystem>
 #include <optional>
@@ -73,7 +74,10 @@ class Downloader {
   std::vector<gcs::ListObjectsReader::value_type> RetrieveBucketObjects(
       const std::string& url);
 
-  void DownloadBucketObjects(
+  using DownloadFutures = std::vector<boost::future<
+      std::pair<std::string, std::optional<std::filesystem::path> > > >;
+
+  DownloadFutures DownloadBucketObjects(
       const std::vector<gcs::ListObjectsReader::value_type>& bucketObjects,
       const std::filesystem::path& outputPath);
 };
