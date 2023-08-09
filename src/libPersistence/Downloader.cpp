@@ -17,7 +17,7 @@ namespace {
 const constexpr std::chrono::seconds WAIT_INTERVAL{2};
 const constexpr std::size_t FILE_CHUNK_SIZE_BYTES{512 * 1024};
 
-std::string decode64(const std::string& val) {
+std::string Decode64(const std::string& val) {
   using namespace boost::archive::iterators;
   using It =
       transform_width<binary_from_base64<std::string::const_iterator>, 8, 6>;
@@ -26,23 +26,40 @@ std::string decode64(const std::string& val) {
       [](char c) { return c == '\0'; });
 }
 
-int writeEntry(archive* inArchive, archive* outArchive) {
-  for (;;) {
+void PrintTarError(int result, archive* ar) {
+  assert(ar);
+  if (result <= ARCHIVE_FATAL) {
+    std::cerr << "Fatal: " << archive_error_string(ar) << std::endl;
+  } else if (result <= ARCHIVE_FAILED) {
+    std::cerr << "Error: " << archive_error_string(ar) << std::endl;
+  } else if (result < ARCHIVE_OK) {
+    std::cout << "Warning: " << archive_error_string(ar) << std::endl;
+  }
+}
+
+int WriteEntry(archive* inArchive, archive* outArchive) {
+  while (true) {
     const void* buff = nullptr;
     std::size_t size = 0;
     la_int64_t offset = 0;
     auto result = archive_read_data_block(inArchive, &buff, &size, &offset);
-    if (result == ARCHIVE_EOF) return (ARCHIVE_OK);
-    if (result < ARCHIVE_OK) return result;
+    if (result == ARCHIVE_EOF) {
+      return ARCHIVE_OK;
+    }
+    if (result < ARCHIVE_OK) {
+      PrintTarError(result, inArchive);
+      return result;
+    }
+
     result = archive_write_data_block(outArchive, buff, size, offset);
     if (result < ARCHIVE_OK) {
-      std::cerr << archive_error_string(outArchive);
+      PrintTarError(result, outArchive);
       return result;
     }
   }
 }
 
-void extract(const std::filesystem::path& filePath) {
+void Extract(const std::filesystem::path& filePath) {
   auto inArchiveDeleter = [](archive* ptr) {
     archive_read_close(ptr);
     archive_read_free(ptr);
@@ -60,13 +77,9 @@ void extract(const std::filesystem::path& filePath) {
   std::unique_ptr<archive, decltype(outArchiveDeleter)> outArchive{
       archive_write_disk_new(), outArchiveDeleter};
 
-  /* Select which attributes we want to restore. */
-  int flags = ARCHIVE_EXTRACT_TIME;
-  flags |= ARCHIVE_EXTRACT_PERM;
-  flags |= ARCHIVE_EXTRACT_ACL;
-  flags |= ARCHIVE_EXTRACT_FFLAGS;
-
-  archive_write_disk_set_options(outArchive.get(), flags);
+  archive_write_disk_set_options(
+      outArchive.get(), ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM |
+                            ARCHIVE_EXTRACT_ACL | ARCHIVE_EXTRACT_FFLAGS);
   archive_write_disk_set_standard_lookup(outArchive.get());
 
   const constexpr std::size_t BLOCK_SIZE = 10240;
@@ -76,46 +89,44 @@ void extract(const std::filesystem::path& filePath) {
     return;
   }
 
-  for (;;) {
+  while (true) {
     archive_entry* entry = nullptr;
     auto result = archive_read_next_header(inArchive.get(), &entry);
+    PrintTarError(result, inArchive.get());
     if (result == ARCHIVE_EOF) {
       return;
     }
 
-    if (result < ARCHIVE_OK) {
-      std::cerr << archive_error_string(inArchive.get());
-    }
-
     if (result < ARCHIVE_WARN) {
-      exit(1);
+      std::cerr << "Extraction of " << filePath << " aborted!" << std::endl;
+      return;
     }
 
     result = archive_write_header(outArchive.get(), entry);
-    if (result < ARCHIVE_OK) {
-      std::cerr << archive_error_string(outArchive.get());
-    } else if (archive_entry_size(entry) > 0) {
-      result = writeEntry(inArchive.get(), outArchive.get());
-      if (result < ARCHIVE_OK) {
-        std::cerr << archive_error_string(outArchive.get());
-      }
+    PrintTarError(result, outArchive.get());
+    if (result >= ARCHIVE_OK && archive_entry_size(entry) > 0) {
+      result = WriteEntry(inArchive.get(), outArchive.get());
       if (result < ARCHIVE_WARN) {
-        exit(1);
+        std::cerr << "Extraction of " << filePath << " aborted!" << std::endl;
+        return;
       }
     }
     result = archive_write_finish_entry(outArchive.get());
-    if (result < ARCHIVE_OK) {
-      std::cerr << archive_error_string(outArchive.get());
-    }
+    PrintTarError(result, outArchive.get());
     if (result < ARCHIVE_WARN) {
-      exit(1);
+      std::cerr << "Extraction of " << filePath << " aborted!" << std::endl;
+      return;
     }
   }
 }
 
-void extractGZippedFiles(const std::filesystem::path& dirPath) {
+void ExtractGZippedFiles(const std::filesystem::path& dirPath) {
+  // The doesn't seem to be a way to tell libarchive where to extract
+  // the tar to, so we need to change the current directory to make
+  // sure it's written where we want.
   std::error_code errorCode;
   std::filesystem::current_path(dirPath, errorCode);
+
   std::vector<std::filesystem::directory_entry> dirEntries;
   std::copy_if(std::filesystem::directory_iterator(dirPath),
                std::filesystem::directory_iterator(),
@@ -125,7 +136,7 @@ void extractGZippedFiles(const std::filesystem::path& dirPath) {
   for (const auto& file : dirEntries) {
     const auto& filePath = file.path();
     if (filePath.string().ends_with("tar.gz")) {
-      extract(filePath);
+      Extract(filePath);
     }
 
     std::filesystem::remove(filePath);
@@ -135,8 +146,7 @@ void extractGZippedFiles(const std::filesystem::path& dirPath) {
 void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
                           const std::string& objectName,
                           const std::filesystem::path& outputPath,
-                          const std::string& expectedCrc32c,
-                          bool extractCompressed = false) {
+                          const std::string& expectedCrc32c) {
   auto inputStream = client.ReadObject(bucketName, objectName);
   if (!inputStream) {
     std::cerr << "Can't download bucket object (" << objectName << ") in "
@@ -181,7 +191,7 @@ void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
     outputStream.write(chunk.data(), bytesRead);
   }
 
-  auto decodedCrc32c = decode64(expectedCrc32c);
+  auto decodedCrc32c = Decode64(expectedCrc32c);
   if (decodedCrc32c.size() != sizeof(crc32c) ||
       !std::equal(std::rbegin(decodedCrc32c), std::rend(decodedCrc32c),
                   reinterpret_cast<char*>(&crc32c))) {
@@ -189,11 +199,6 @@ void DownloadBucketObject(gcs::Client client, const std::string& bucketName,
               << "; skipping..." << std::endl;
     return;
   }
-
-#if 0
-  if (!extractCompressed || !fileName.string().ends_with("tar.gz")) return;
-  extract(filePath);
-#endif
 }
 
 }  // namespace
@@ -273,8 +278,8 @@ void Downloader::DownloadPersistenceAndStateDeltas() {
   std::filesystem::remove(StateDeltaPath(), errorCode);
   std::filesystem::create_directories(StateDeltaPath(), errorCode);
   bucketObjects = RetrieveBucketObjects(StateDeltaURLPrefix());
-  DownloadBucketObjects(bucketObjects, StateDeltaPath(), true);
-  extractGZippedFiles(StateDeltaPath());
+  DownloadBucketObjects(bucketObjects, StateDeltaPath());
+  ExtractGZippedFiles(StateDeltaPath());
 }
 
 std::vector<gcs::ListObjectsReader::value_type>
@@ -303,8 +308,7 @@ Downloader::RetrieveBucketObjects(const std::string& url) {
 
 void Downloader::DownloadBucketObjects(
     const std::vector<gcs::ListObjectsReader::value_type>& bucketObjects,
-    const std::filesystem::path& outputPath,
-    bool extractCompressed /*= false*/) {
+    const std::filesystem::path& outputPath) {
   for (const auto& bucketObject : bucketObjects) {
     if (!bucketObject) {
       std::cerr << "Can't download bucket object " << bucketObject->name()
@@ -316,10 +320,9 @@ void Downloader::DownloadBucketObjects(
     // according to Google.
     m_threadPool.submit([client = m_client, bucketName = m_bucketName,
                          objectName = bucketObject->name(), outputPath,
-                         extractCompressed,
                          crc32c = bucketObject->crc32c()]() mutable {
       DownloadBucketObject(std::move(client), bucketName, objectName,
-                           outputPath, crc32c, extractCompressed);
+                           outputPath, crc32c);
     });
   }
 }
