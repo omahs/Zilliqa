@@ -55,6 +55,10 @@ class Downloader {
   mutable gcs::Client m_client;
   boost::executors::basic_thread_pool m_threadPool;
 
+  std::string StatidDbURLPrefix() const {
+    return "blockchain-data/" + m_testnetName + '/';
+  }
+
   std::string PersistenceURLPrefix() const {
     return "incremental/" + m_testnetName + '/';
   }
@@ -64,12 +68,14 @@ class Downloader {
   }
 
   auto StoragePath() const { return m_storagePath; }
+  auto StaticDbPath() const { return m_storagePath / "/historical-data"; }
   auto PersistencePath() const { return m_storagePath / "persistence"; }
   auto PersistenceDiffPath() const { return m_storagePath / "persistenceDiff"; }
   auto StateDeltaPath() const { return m_storagePath / "StateDeltaFromS3"; }
 
   bool IsUploadOngoing() const;
   std::optional<uint64_t> GetCurrentTxBlkNum() const;
+  void DownloadStaticDb();
   void DownloadPersistenceAndStateDeltas();
   void DownloadDiffs(uint64_t fromTxBlk, uint64_t toTxBlk,
                      const std::string& prefix,

@@ -233,7 +233,8 @@ Downloader::~Downloader() noexcept {
 }
 
 void Downloader::Start() {
-  // TODO: download static DB
+  // TODO: download static DB if not excluded
+  DownloadStaticDb();
 
   while (true) {
     if (IsUploadOngoing()) {
@@ -310,6 +311,20 @@ std::optional<uint64_t> Downloader::GetCurrentTxBlkNum() const try {
 } catch (std::exception& e) {
   std::cerr << e.what() << std::endl;
   return std::nullopt;
+}
+
+void Downloader::DownloadStaticDb() {
+  //
+  std::error_code errorCode;
+  std::filesystem::create_directories(StaticDbPath(), errorCode);
+
+  auto bucketObjects =
+      RetrieveBucketObjects(StatidDbURLPrefix() + m_testnetName + "tar.gz");
+  assert(bucketObjects.size() <= 1);
+  auto staticDbFutures = DownloadBucketObjects(bucketObjects, StaticDbPath());
+  boost::wait_for_all(std::ranges::begin(staticDbFutures),
+                      std::ranges::end(staticDbFutures));
+  ExtractGZippedFiles(StaticDbPath());
 }
 
 void Downloader::DownloadPersistenceAndStateDeltas() {
