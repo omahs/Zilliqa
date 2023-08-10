@@ -167,7 +167,9 @@ void Node::PopulateAccounts() {
     LOG_GENERAL(INFO, "Accounts Pregen is not enabled");
 
     if (readAccountJsonFromFile("/etc/zilliqa/isolated-server-accounts.json") ==
-        0) {
+            0 ||
+        readAccountJsonFromFile("/tmp/zilliqa/isolated-server-accounts.json") ==
+            0) {
       LOG_GENERAL(INFO, "ADDED isolated-server-accounts.json")
     } else {
       LOG_GENERAL(INFO, "Not using isolated-server-accounts.json")
