@@ -39,10 +39,12 @@ class Downloader {
 
   template <typename StoragePathT, typename BucketNameT, typename TestnetNameT>
   Downloader(StoragePathT&& storagePath, BucketNameT&& bucketName,
-             TestnetNameT&& testnetName, unsigned int threadCount)
+             TestnetNameT&& testnetName, bool excludeMicroBlocks,
+             unsigned int threadCount)
       : m_storagePath{std::forward<StoragePathT>(storagePath)},
         m_bucketName{std::forward<BucketNameT>(bucketName)},
         m_testnetName{std::forward<TestnetNameT>(testnetName)},
+        m_excludeMicroBlocks{excludeMicroBlocks},
         m_threadPool{threadCount} {}
 
   void Start();
@@ -51,6 +53,7 @@ class Downloader {
   const std::filesystem::path m_storagePath;
   const std::string m_bucketName;
   const std::string m_testnetName;
+  const bool m_excludeMicroBlocks;
 
   mutable gcs::Client m_client;
   boost::executors::basic_thread_pool m_threadPool;
@@ -80,11 +83,12 @@ class Downloader {
   void DownloadDiffs(uint64_t fromTxBlk, uint64_t toTxBlk,
                      const std::string& prefix,
                      const std::string& fileNamePrefix,
-                     const std::filesystem::path& downloadPath);
+                     const std::filesystem::path& downloadPath,
+                     bool excludePersistenceDiff = true);
   void DownloadPersistenceDiff(uint64_t fromTxBlk, uint64_t toTxBlk);
   void DownloadStateDeltaDiff(uint64_t fromTxBlk, uint64_t toTxBlk);
   std::vector<gcs::ListObjectsReader::value_type> RetrieveBucketObjects(
-      const std::string& prefix);
+      const std::string& prefix, bool excludePersistenceDiff = true);
 
   using DownloadFutures = std::vector<boost::future<
       std::pair<std::string, std::optional<std::filesystem::path> > > >;

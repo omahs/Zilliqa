@@ -4581,16 +4581,16 @@ void Lookup::RejoinAsNewLookup(bool fromLookup) {
       };
       DetachedFunction(1, func2);
     } else {
-      LOG_GENERAL(INFO, "Syncing from S3 ...");
+      LOG_GENERAL(INFO, "Syncing from cloud storage ...");
       auto func2 = [this]() mutable -> void {
         while (true) {
           this->CleanVariables();
           AccountStore::GetInstance().Init();
           m_mediator.m_node->CleanUnavailableMicroBlocks();
-          while (!m_mediator.m_node->DownloadPersistenceFromS3()) {
+          while (!m_mediator.m_node->DownloadPersistence()) {
             LOG_GENERAL(
                 WARNING,
-                "Downloading persistence from S3 has failed. Will try again!");
+                "Downloading persistence has failed. Will try again!");
             this_thread::sleep_for(chrono::seconds(RETRY_REJOINING_TIMEOUT));
           }
           if (!BlockStorage::GetBlockStorage().RefreshAll()) {
@@ -4617,7 +4617,7 @@ void Lookup::RejoinAsNewLookup(bool fromLookup) {
           SetAboveLayer(m_l2lDataProviders, "node.l2l_data_providers");
         }
 
-        // Check if next ds epoch was crossed -cornercase after syncing from S3
+        // Check if next ds epoch was crossed -cornercase after syncing from cloud storage
         if ((m_mediator.m_txBlockChain.GetBlockCount() %
                  NUM_FINAL_BLOCK_PER_POW ==
              0)                // Can fetch dsblock and txblks from new ds epoch
@@ -4625,7 +4625,7 @@ void Lookup::RejoinAsNewLookup(bool fromLookup) {
                                // confirm if no new ds epoch started
           InitSync();
         } else {
-          // Sync from S3 again
+          // Sync from cloud storage again
           LOG_GENERAL(INFO,
                       "I am lagging behind by ds epoch! Will rejoin again!");
           m_mediator.m_lookup->SetSyncType(SyncType::NO_SYNC);
@@ -4710,16 +4710,16 @@ void Lookup::RejoinAsLookup(bool fromLookup) {
       auto func2 = [this]() mutable -> void { StartSynchronization(); };
       DetachedFunction(1, func2);
     } else {
-      LOG_GENERAL(INFO, "Syncing from S3 ...");
+      LOG_GENERAL(INFO, "Syncing from cloud storage ...");
       auto func2 = [this]() mutable -> void {
         while (true) {
           this->CleanVariables();
           AccountStore::GetInstance().Init();
           m_mediator.m_node->CleanUnavailableMicroBlocks();
-          while (!m_mediator.m_node->DownloadPersistenceFromS3()) {
+          while (!m_mediator.m_node->DownloadPersistence()) {
             LOG_GENERAL(
                 WARNING,
-                "Downloading persistence from S3 has failed. Will try again!");
+                "Downloading persistence has failed. Will try again!");
             this_thread::sleep_for(chrono::seconds(RETRY_REJOINING_TIMEOUT));
           }
           if (!BlockStorage::GetBlockStorage().RefreshAll()) {
@@ -4741,7 +4741,7 @@ void Lookup::RejoinAsLookup(bool fromLookup) {
                                              // CleanVariable earlier
         }
         // Check if next ds epoch was crossed - corner case after syncing from
-        // S3
+        // cloud storage
         if ((m_mediator.m_txBlockChain.GetBlockCount() %
                  NUM_FINAL_BLOCK_PER_POW ==
              0)                // Can fetch dsblock and txblks from new ds epoch
@@ -4749,7 +4749,7 @@ void Lookup::RejoinAsLookup(bool fromLookup) {
                                // confirm if no new ds epoch started
           StartSynchronization();
         } else {
-          // Sync from S3 again
+          // Sync from cloud storage again
           LOG_GENERAL(
               INFO,
               "I am lagging behind again by ds epoch! Will rejoin again!");
@@ -4757,7 +4757,7 @@ void Lookup::RejoinAsLookup(bool fromLookup) {
           RejoinAsLookup(false);
           /* Note: We would like to try to sync the missing txblocks that comes
              before and after next ds epoch from other lookups. ( instead of
-             complete sync from S3) However, we dont't store the statedeltas
+             complete sync from cloud storage) However, we dont't store the statedeltas
              from previous ds epoch. So can't fetch the statedeltas for txblocks
              that comes before next ds epoch. So those txblks would fails the
              verification.

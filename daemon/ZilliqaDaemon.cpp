@@ -200,9 +200,9 @@ string ZilliqaDaemon::Execute(const string& cmd) {
   return result;
 }
 
-bool ZilliqaDaemon::DownloadPersistenceFromS3() {
+bool ZilliqaDaemon::DownloadPersistence() {
   string output;
-  ZilliqaDaemon::LOG(m_log, "downloading persistence from S3.");
+  ZilliqaDaemon::LOG(m_log, "downloading persistence.");
   output = Execute("python3 " + m_curPath + download_incr_DB_script);
   return (output.find("Done!") != std::string::npos);
 }
@@ -327,9 +327,9 @@ void ZilliqaDaemon::StartNewProcess(bool cleanPersistence) {
   if (m_cseed) {
     // 1. Download Incremental DB Persistence
     // 2. Restart zilliqa with syncType 6
-    while (!DownloadPersistenceFromS3()) {
+    while (!DownloadPersistence()) {
       ZilliqaDaemon::LOG(
-          m_log, "Downloading persistence from S3 has failed. Will try again!");
+          m_log, "Downloading persistence has failed. Will try again!");
       this_thread::sleep_for(chrono::seconds(10));
     }
 

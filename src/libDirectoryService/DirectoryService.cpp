@@ -554,10 +554,10 @@ void DirectoryService::RejoinAsDS(bool modeCheck, bool fromUpperSeed) {
           m_mediator.m_lookup->SetSyncType(SyncType::DS_SYNC);
           m_mediator.m_node->CleanVariables();
           this->CleanVariables();
-          while (!m_mediator.m_node->DownloadPersistenceFromS3()) {
+          while (!m_mediator.m_node->DownloadPersistence()) {
             LOG_GENERAL(
                 WARNING,
-                "Downloading persistence from S3 has failed. Will try again!");
+                "Downloading persistence has failed. Will try again!");
             this_thread::sleep_for(chrono::seconds(RETRY_REJOINING_TIMEOUT));
           }
           if (!BlockStorage::GetBlockStorage().RefreshAll()) {

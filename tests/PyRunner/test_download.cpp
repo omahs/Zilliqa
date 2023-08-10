@@ -52,7 +52,7 @@ BOOST_AUTO_TEST_CASE(testpyrunner) {
 
   mediator.RegisterColleagues(nullptr, &node, &lk, vd.get());
 
-  node.DownloadPersistenceFromS3();
+  node.DownloadPersistence();
 }
 
 BOOST_AUTO_TEST_SUITE_END()

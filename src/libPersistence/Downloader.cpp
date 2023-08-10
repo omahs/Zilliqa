@@ -355,8 +355,10 @@ void Downloader::DownloadPersistenceAndStateDeltas() {
 void Downloader::DownloadDiffs(uint64_t fromTxBlk, uint64_t toTxBlk,
                                const std::string& prefix,
                                const std::string& fileNamePrefix,
-                               const std::filesystem::path& downloadPath) {
-  auto bucketObjects = RetrieveBucketObjects(prefix + fileNamePrefix);
+                               const std::filesystem::path& downloadPath,
+                               bool excludePersistenceDiff /*= true*/) {
+  auto bucketObjects =
+      RetrieveBucketObjects(prefix + fileNamePrefix, excludePersistenceDiff);
   bucketObjects.erase(
       std::remove_if(
           std::ranges::begin(bucketObjects), std::ranges::end(bucketObjects),
@@ -393,7 +395,7 @@ void Downloader::DownloadPersistenceDiff(uint64_t fromTxBlk, uint64_t toTxBlk) {
   std::filesystem::create_directories(PersistenceDiffPath(), errorCode);
 
   DownloadDiffs(fromTxBlk, toTxBlk, PersistenceURLPrefix(), "diff_persistence_",
-                PersistenceDiffPath());
+                PersistenceDiffPath(), false);
 
   for (const auto& dirEntry :
        std::filesystem::directory_iterator(PersistenceDiffPath())) {
@@ -419,23 +421,30 @@ void Downloader::DownloadStateDeltaDiff(uint64_t fromTxBlk, uint64_t toTxBlk) {
 }
 
 std::vector<gcs::ListObjectsReader::value_type>
-Downloader::RetrieveBucketObjects(const std::string& prefix) {
+Downloader::RetrieveBucketObjects(const std::string& prefix,
+                                  bool excludePersistenceDiff /* = true*/) {
   std::vector<gcs::ListObjectsReader::value_type> result;
 
   auto listObjectsReader =
       m_client.ListObjects(m_bucketName, gcs::Prefix(prefix));
   for (auto& bucketObject : listObjectsReader) {
+    const auto& objectName = bucketObject->name();
+    if ((excludePersistenceDiff &&
+         objectName.rfind("diff_persistence") != std::string::npos) ||
+        (m_excludeMicroBlocks &&
+         (objectName.rfind("txEpochs") != std::string::npos ||
+          objectName.rfind("txBodies") != std::string::npos ||
+          objectName.rfind("microBlock") != std::string::npos ||
+          objectName.rfind("minerInfo") != std::string::npos))) {
+      continue;
+    }
+
     if (!bucketObject) {
-      std::cerr << "Bad bucket object (" << bucketObject->name() << ") in "
+      std::cerr << "Bad bucket object (" << objectName << ") in "
                 << m_bucketName << '/' + prefix << std::endl;
       continue;
     }
 
-    // TODO: exclude if (not (Exclude_txnBodies and "txEpochs" in key_url) and
-    // not (Exclude_txnBodies and "txBodies" in key_url) and not
-    // (Exclude_microBlocks and "microBlock" in key_url) and not
-    // (Exclude_minerInfo and "minerInfo" in key_url) and not
-    // ("diff_persistence" in key_url)):
     result.emplace_back(std::move(bucketObject));
   }
 

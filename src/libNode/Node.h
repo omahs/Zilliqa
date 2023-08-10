@@ -587,7 +587,7 @@ class Node : public Executable {
   Mediator& GetMediator() { return m_mediator; }
 
   /// Download peristence from incremental db
-  bool DownloadPersistenceFromS3();
+  bool DownloadPersistence();
 
   /// Recover the previous state by retrieving persistence data
   bool StartRetrieveHistory(const SyncType syncType, bool &allowRecoverAllSync,

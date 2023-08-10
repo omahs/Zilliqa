@@ -16,6 +16,7 @@ int main(int argc, char* argv[]) {
   std::filesystem::path storagePath;
   std::string bucketName;
   std::string testnetName;
+  bool excludeMicroBlocks = true;
   unsigned int threadCount = 0;
   desc.add_options()("help,h", "Print help messages")(
       "storage-path,s",
@@ -24,6 +25,9 @@ int main(int argc, char* argv[]) {
       "bucket-name,b", po::value<std::string>(&bucketName)->required(),
       "The name of the bucket")(
       "testnet-name,n", po::value<std::string>(&testnetName)->required(),
+      "The name of the testnet")(
+      "exclude-micro-blocks,e",
+      po::value<bool>(&excludeMicroBlocks)->default_value(true),
       "The name of the testnet")(
       "threads,t",
       po::value<unsigned int>(&threadCount)
@@ -44,7 +48,7 @@ int main(int argc, char* argv[]) {
 
     zil::persistence::Downloader downloader{
         std::move(storagePath), std::move(bucketName), std::move(testnetName),
-        threadCount};
+        excludeMicroBlocks, threadCount};
 
     downloader.Start();
 

@@ -47,7 +47,7 @@ class ZilliqaDaemon final {
 
   static std::string CurrentTimeStamp();
   static std::string Execute(const std::string& cmd);
-  bool DownloadPersistenceFromS3();
+  bool DownloadPersistence();
 
   std::vector<pid_t> GetProcIdByName(const std::string& procName);
   void StartNewProcess(bool cleanPersistence = false);

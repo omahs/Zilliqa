@@ -41,6 +41,7 @@
 #include "libNetwork/Guard.h"
 #include "libNetwork/P2P.h"
 #include "libPOW/pow.h"
+#include "libPersistence/Downloader.h"
 #include "libPersistence/Retriever.h"
 #include "libUtils/CommonUtils.h"
 #include "libUtils/DataConversion.h"
@@ -276,13 +277,15 @@ std::string readPipe(boost::asio::readable_pipe &pipe) {
 }
 
 }  // namespace
-bool Node::DownloadPersistenceFromS3() {
+
+bool Node::DownloadPersistence() try {
   LOG_MARKER();
   AccountStore::GetInstance().SetPurgeStopSignal();
   while (AccountStore::GetInstance().IsPurgeRunning()) {
     LOG_GENERAL(INFO, "Purge Already Running");
     this_thread::sleep_for(chrono::milliseconds(10));
   }
+
   // TODO: replace
 
   try {
@@ -324,6 +327,31 @@ bool Node::DownloadPersistenceFromS3() {
     LOG_GENERAL(WARNING, "Unknown error while downloading persistence...");
     return false;
   }
+
+  auto bucketName = std::getenv("Z7A_BUCKET_NAME");
+  if (!bucketName) {
+    return false;
+  }
+
+  auto testnetName = std::getenv("Z7A_TESTNET_NAME");
+  if (!testnetName) {
+    return false;
+  }
+
+  auto excludembtxns = !LOOKUP_NODE_MODE;
+  const constexpr unsigned int DEFAULT_THREAD_COUNT = 10;
+  zil::persistence::Downloader persistenceDownloader{
+      STORAGE_PATH + "/", bucketName, testnetName, excludembtxns,
+      DEFAULT_THREAD_COUNT};
+
+  persistenceDownloader.Start();
+  return true;
+} catch (std::exception &e) {
+  LOG_GENERAL(WARNING, "Failed to download persistence: " << e.what());
+  return false;
+} catch (...) {
+  LOG_GENERAL(WARNING, "Unknown failure while downloading persistence");
+  return false;
 }
 
 bool Node::Install(const SyncType syncType, const bool toRetrieveHistory,
@@ -2255,10 +2283,9 @@ void Node::RejoinAsNormal() {
         m_mediator.m_lookup->SetSyncType(SyncType::NORMAL_SYNC);
         this->CleanVariables();
         this->m_mediator.m_ds->CleanVariables();
-        while (!this->DownloadPersistenceFromS3()) {
-          LOG_GENERAL(
-              WARNING,
-              "Downloading persistence from S3 has failed. Will try again!");
+        while (!this->DownloadPersistence()) {
+          LOG_GENERAL(WARNING,
+                      "Downloading persistence has failed. Will try again!");
           this_thread::sleep_for(chrono::seconds(RETRY_REJOINING_TIMEOUT));
         }
         if (!BlockStorage::GetBlockStorage().RefreshAll()) {

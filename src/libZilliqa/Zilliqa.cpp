@@ -263,8 +263,8 @@ Zilliqa::Zilliqa(const PairOfKey &key, const Peer &peer, SyncType syncType,
 
   // when individual node is being recovered and persistence is not available
   // locally, then Rejoin as if new miner node which will download persistence
-  // from S3 incremental db and identify if already part of any
-  // shard/dscommittee and proceed accordingly.
+  // incremental db and identify if already part of any shard/dscommittee and
+  // proceed accordingly.
 
   if (!LOOKUP_NODE_MODE && (SyncType::RECOVERY_ALL_SYNC == syncType)) {
     if (!std::filesystem::exists(STORAGE_PATH + PERSISTENCE_PATH)) {
@@ -294,10 +294,10 @@ Zilliqa::Zilliqa(const PairOfKey &key, const Peer &peer, SyncType syncType,
   BlockStorage::GetBlockStorage().ResetDB(BlockStorage::DIAGNOSTIC_COINBASE);
 
   if (SyncType::NEW_LOOKUP_SYNC == syncType || SyncType::NEW_SYNC == syncType) {
-    while (!m_n.DownloadPersistenceFromS3()) {
+    while (!m_n.DownloadPersistence()) {
       LOG_GENERAL(
           WARNING,
-          "Downloading persistence from S3 has failed. Will try again!");
+          "Downloading persistence has failed. Will try again!");
       this_thread::sleep_for(chrono::seconds(RETRY_REJOINING_TIMEOUT));
     }
     if (!BlockStorage::GetBlockStorage().RefreshAll()) {
@@ -322,10 +322,10 @@ Zilliqa::Zilliqa(const PairOfKey &key, const Peer &peer, SyncType syncType,
         } else {
           m_n.CleanVariables();
         }
-        while (!m_n.DownloadPersistenceFromS3()) {
+        while (!m_n.DownloadPersistence()) {
           LOG_GENERAL(
               WARNING,
-              "Downloading persistence from S3 has failed. Will try again!");
+              "Downloading persistence has failed. Will try again!");
           this_thread::sleep_for(chrono::seconds(RETRY_REJOINING_TIMEOUT));
         }
         if (!BlockStorage::GetBlockStorage().RefreshAll()) {
@@ -380,7 +380,7 @@ Zilliqa::Zilliqa(const PairOfKey &key, const Peer &peer, SyncType syncType,
         LOG_GENERAL(INFO, "Sync as a new lookup node");
         if (toRetrieveHistory) {
           // Check if next ds epoch was crossed -cornercase after syncing from
-          // S3
+          // cloud storage.
           if ((m_mediator.m_txBlockChain.GetBlockCount() %
                    NUM_FINAL_BLOCK_PER_POW ==
                0)  // Can fetch dsblock and txblks from new ds epoch
@@ -389,7 +389,7 @@ Zilliqa::Zilliqa(const PairOfKey &key, const Peer &peer, SyncType syncType,
             // to confirm if no new ds epoch started
             m_mediator.m_lookup->InitSync();
           } else {
-            // Sync from S3 again
+            // Sync from cloud storage again
             LOG_GENERAL(INFO,
                         "I am lagging behind by ds epoch! Will rejoin again!");
             m_mediator.m_lookup->SetSyncType(SyncType::NO_SYNC);
