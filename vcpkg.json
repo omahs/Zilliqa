@@ -20,7 +20,6 @@
     "boost-test",
     "mongo-c-driver",
     "mongo-cxx-driver",
-    "websocketpp",
     "miniupnpc",
     {
       "name": "leveldb",

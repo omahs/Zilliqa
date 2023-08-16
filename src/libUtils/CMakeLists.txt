@@ -35,5 +35,4 @@ target_link_libraries(Utils
         PRIVATE
         Metrics
         ${CryptoUtils_LIBRARY}
-        ${g3sinks_LOGROTATE_LIBRARY}
-        websocketpp::websocketpp)
+        ${g3sinks_LOGROTATE_LIBRARY})

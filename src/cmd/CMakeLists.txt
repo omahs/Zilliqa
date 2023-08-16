@@ -86,13 +86,6 @@ add_custom_command(TARGET zilliqa
 target_include_directories(isolatedServer PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(isolatedServer PUBLIC AccountStore AccountData Mediator Persistence Server Validator Boost::program_options)
 
-add_executable(websocketsubscriber websocketsubscriber.cpp)
-add_custom_command(TARGET zilliqa
-        POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:websocketsubscriber> ${CMAKE_BINARY_DIR}/tests/Zilliqa)
-target_include_directories(websocketsubscriber PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(websocketsubscriber PUBLIC Utils Server AccountStore Boost::program_options)
-
 add_executable(buildTxBlockHashesToNums buildTxBlockHashesToNums.cpp)
 add_custom_command(TARGET zilliqa
        POST_BUILD
