@@ -12,7 +12,6 @@
     "boost-beast",
     "boost-bimap",
     "boost-compute",
-    "boost-crc",
     "boost-multiprecision",
     "boost-program-options",
     "boost-process",
@@ -79,10 +78,6 @@
     {
       "name": "cryptoutils",
       "version": "8.3.0#1"
-    },
-    {
-      "name": "websocketpp",
-      "version": "0.8.2#3"
     },
     {
       "name": "opentelemetry-cpp",
