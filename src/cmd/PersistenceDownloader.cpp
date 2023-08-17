@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
       "The name of the testnet")(
       "exclude-micro-blocks,e",
       po::value<bool>(&excludeMicroBlocks)->default_value(true),
-      "The name of the testnet")(
+      "Exclude micro blocks")(
       "threads,t",
       po::value<unsigned int>(&threadCount)
           ->default_value(DEFAULT_THREAD_COUNT),

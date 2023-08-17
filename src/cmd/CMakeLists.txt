@@ -119,3 +119,9 @@ target_link_libraries(persistence_downloader
   PRIVATE
     Boost::program_options
     PersistenceDownloader)
+
+add_executable(persistence_uploader PersistenceUploader.cpp)
+target_link_libraries(persistence_uploader
+  PRIVATE
+    Boost::program_options
+    PersistenceUploader)
