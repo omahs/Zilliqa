@@ -261,23 +261,6 @@ Node::Node(Mediator &mediator, [[gnu::unused]] unsigned int syncType,
 
 Node::~Node() {}
 
-namespace {
-
-// FIXME: duplicate from daemon/ZilliqaUpdater.cpp; move to a common function.
-std::string readPipe(boost::asio::readable_pipe &pipe) {
-  std::string result;
-  boost::system::error_code errorCode;
-  while (!errorCode) {
-    std::array<char, 1024> buffer;
-    auto byteCount = pipe.read_some(boost::asio::buffer(buffer), errorCode);
-    result += std::string_view{buffer.data(), byteCount};
-  }
-
-  return result;
-}
-
-}  // namespace
-
 bool Node::DownloadPersistence() try {
   LOG_MARKER();
   AccountStore::GetInstance().SetPurgeStopSignal();
@@ -287,46 +270,6 @@ bool Node::DownloadPersistence() try {
   }
 
   // TODO: replace
-
-  try {
-    string excludembtxns = LOOKUP_NODE_MODE ? "false" : "true";
-    boost::asio::io_context ioContext;
-    int exitCode = -1;
-    std::thread thread;
-
-    ioContext.post([&]() {
-      thread = std::thread{[&]() {
-        // Make sure SIGCHLD isn't SIG_IGN or wait() below will fail and throw
-        // and exception.
-        auto prevHandler = signal(SIGCHLD, SIG_DFL);
-        try {
-          boost::asio::readable_pipe pipe{ioContext};
-          boost::process::v2::process process{
-              ioContext,
-              "/usr/bin/python3",
-              {"download_incr_DB.py", STORAGE_PATH + "/", excludembtxns},
-              boost::process::v2::process_stdio{{}, pipe, {}}};
-          auto output = readPipe(pipe);
-          LOG_GENERAL(INFO, output);
-          exitCode = process.wait();
-          LOG_GENERAL(INFO,
-                      "Running download_incr_DB.py returned with exit code = "
-                          << exitCode);
-        } catch (std::exception &e) {
-          LOG_GENERAL(WARNING, "Failed to run/wait processes: " << e.what());
-        }
-
-        signal(SIGCHLD, prevHandler);
-        ioContext.stop();
-      }};
-    });
-    ioContext.run();
-    thread.join();
-    return exitCode == 0;
-  } catch (...) {
-    LOG_GENERAL(WARNING, "Unknown error while downloading persistence...");
-    return false;
-  }
 
   auto bucketName = std::getenv("Z7A_BUCKET_NAME");
   if (!bucketName) {
@@ -1512,10 +1455,9 @@ uint32_t Node::CalculateShardLeaderFromDequeOfNode(
     uint16_t lastBlockHash, uint32_t sizeOfShard,
     const DequeOfNode &shardMembers) {
   LOG_MARKER();
-  LOG_GENERAL(INFO,"STEVE lastBlockHash: " << lastBlockHash
-                                      << ", sizeOfShard: " << sizeOfShard
-                                      << ", shardMembers.size(): "
-                                      << shardMembers.size());
+  LOG_GENERAL(INFO, "STEVE lastBlockHash: "
+                        << lastBlockHash << ", sizeOfShard: " << sizeOfShard
+                        << ", shardMembers.size(): " << shardMembers.size());
   if (GUARD_MODE) {
     uint32_t consensusLeaderIndex = lastBlockHash % sizeOfShard;
 
@@ -2560,7 +2502,8 @@ bool Node::ProcessRemoveNodeFromBlacklist(
   if (!WhitelistReqsValidator(from.GetIpAddress())) {
     // Blacklist - strict one - since too many whitelist request in current ds
     // epoch.
-    Blacklist::GetInstance().Add({from.GetIpAddress(),from.GetListenPortHost(),from.GetNodeIndentifier()});
+    Blacklist::GetInstance().Add({from.GetIpAddress(), from.GetListenPortHost(),
+                                  from.GetNodeIndentifier()});
     return false;
   }
 
@@ -2596,7 +2539,8 @@ bool Node::ProcessRemoveNodeFromBlacklist(
     return false;
   }
 
-  Blacklist::GetInstance().Remove({ipAddress,from.GetListenPortHost(),from.GetNodeIndentifier()});
+  Blacklist::GetInstance().Remove(
+      {ipAddress, from.GetListenPortHost(), from.GetNodeIndentifier()});
   return true;
 }
 
@@ -2850,7 +2794,7 @@ bool Node::ProcessGetVersion(const zbytes &message, unsigned int offset,
       return false;
     }
     zil::p2p::GetInstance().SendMessage(Peer(from.m_ipAddress, portNo),
-                                       response);
+                                        response);
     m_versionChecked = true;
   }
 
@@ -2992,9 +2936,9 @@ bool Node::ProcessDSGuardNetworkInfoUpdate(
                     });
 
         if (it != m_mediator.m_DSCommittee->end()) {
-          Blacklist::GetInstance().RemoveFromWhitelist({it->second.m_ipAddress,
-                                                        it->second.m_listenPortHost,
-                                                        it->second.GetNodeIndentifier()}  );
+          Blacklist::GetInstance().RemoveFromWhitelist(
+              {it->second.m_ipAddress, it->second.m_listenPortHost,
+               it->second.GetNodeIndentifier()});
           LOG_GENERAL(INFO, "Removed " << it->second.m_ipAddress
                                        << " from blacklist exclude list");
         }
@@ -3015,9 +2959,10 @@ bool Node::ProcessDSGuardNetworkInfoUpdate(
                             << " new network info is "
                             << dsguardupdate.m_dsGuardNewNetworkInfo)
       if (GUARD_MODE) {
-        Blacklist::GetInstance().Whitelist({dsguardupdate.m_dsGuardNewNetworkInfo.m_ipAddress,
-                                             dsguardupdate.m_dsGuardNewNetworkInfo.m_listenPortHost,
-                                             dsguardupdate.m_dsGuardNewNetworkInfo.GetNodeIndentifier()});
+        Blacklist::GetInstance().Whitelist(
+            {dsguardupdate.m_dsGuardNewNetworkInfo.m_ipAddress,
+             dsguardupdate.m_dsGuardNewNetworkInfo.m_listenPortHost,
+             dsguardupdate.m_dsGuardNewNetworkInfo.GetNodeIndentifier()});
         LOG_GENERAL(INFO,
                     "Added ds guard "
                         << dsguardupdate.m_dsGuardNewNetworkInfo.m_ipAddress
