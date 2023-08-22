@@ -319,7 +319,7 @@ void Downloader::DownloadStaticDb() {
   std::filesystem::create_directories(StaticDbPath(), errorCode);
 
   auto bucketObjects =
-      RetrieveBucketObjects(StatidDbURLPrefix() + m_testnetName + "tar.gz");
+      RetrieveBucketObjects(StaticDbURLPrefix() + m_testnetName + "tar.gz");
   assert(bucketObjects.size() <= 1);
   auto staticDbFutures = DownloadBucketObjects(bucketObjects, StaticDbPath());
   boost::wait_for_all(std::ranges::begin(staticDbFutures),
@@ -427,7 +427,11 @@ Downloader::RetrieveBucketObjects(const std::string& prefix,
 
   auto listObjectsReader =
       m_client.ListObjects(m_bucketName, gcs::Prefix(prefix));
-  for (auto& bucketObject : listObjectsReader) {
+  for (const auto& bucketObject : listObjectsReader) {
+    if (!bucketObject) {
+      continue;
+    }
+
     const auto& objectName = bucketObject->name();
     if ((excludePersistenceDiff &&
          objectName.rfind("diff_persistence") != std::string::npos) ||
