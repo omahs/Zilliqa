@@ -101,41 +101,58 @@ def CreateTempPersistence():
 	logging.info("Copied local persistence to temporary")
 
 def CleanS3StateDeltas():
-	bashCommand = awsCli() + " storage rm --recursive "+getBucketString(STATEDELTA_DIFF_NAME)
+	bashCommand = awsCli() + " storage rm --recursive " + getBucketString(STATEDELTA_DIFF_NAME)
 	process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
 	output, error = process.communicate()
 	logging.info("Cleaned S3 bucket "+getBucketString(STATEDELTA_DIFF_NAME))
 
 def CleanS3EntirePersistence():
-	bashCommand = awsCli() + " storage rm --recursive "+ getBucketString(PERSISTENCE_SNAPSHOT_NAME)
+	bashCommand = awsCli() + " storage rm --recursive " + getBucketString(PERSISTENCE_SNAPSHOT_NAME)
 	process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
 	output, error = process.communicate()
 	logging.info("Cleaned S3 bucket "+getBucketString(PERSISTENCE_SNAPSHOT_NAME))
 
 def CleanS3PersistenceDiffs():
-	bashCommand = awsCli() + " storage rm --recursive "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+" --exclude 'persistence/*' --exclude '.lock' "
+	bashCommand = awsCli() + " storage ls --recursive " + getBucketString(PERSISTENCE_SNAPSHOT_NAME)
 	process = subprocess.Popen(bashCommand, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 	output, error = process.communicate()
-	logging.info("Cleaned S3 bucket "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+ " for persistence diffs!" )
+    if error:
+        logging.info("Error cleaning persistence diffs from S3 bucket " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + f": {error}" )
+        return
+
+    splitted = output.split('\n')
+    # The first entry is the 'gs://bucket-name/:'
+    if len(splitted) > 0:
+        splitted = splitted[1:]
+
+    regex = re.compile(r'.*/(\.lock|persistence[/\\].*)')
+    bashCommand = awsCli() + " storage rm "
+    for bucket_object in filter(lambda x: regex.match(x), splitted):
+        bashCommand = bashCommand + bucket_object
+
+    process = subprocess.Popen(bashCommand, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output, error = process.communicate()
+
+    logging.info("Cleaned S3 bucket " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + f" for persistence diffs: {output}" )
 
 def SetCurrentTxBlkNum(txBlkNum):
 	Path(".currentTxBlk").touch()
 	with open(".currentTxBlk",encoding='utf-8', mode='w') as file:
 		file.write(txBlkNum)
-	bashCommand = awsCli() + " storage cp .currentTxBlk "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/.currentTxBlk"
+	bashCommand = awsCli() + " storage cp .currentTxBlk " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/.currentTxBlk"
 	process = subprocess.Popen(bashCommand, universal_newlines=True, shell=True,stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 	output, error = process.communicate()
 	logging.info("[" + str(datetime.datetime.now()) + "] SetCurrentTxBlkNum:" + txBlkNum + " for uploading process")	
 
 def SetLock():
 	Path(".lock").touch()
-	bashCommand = awsCli() + " storage cp .lock "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/.lock"
+	bashCommand = awsCli() + " storage cp .lock "+getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/.lock"
 	process = subprocess.Popen(bashCommand, universal_newlines=True, shell=True,stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 	output, error = process.communicate()
 	logging.info("[" + str(datetime.datetime.now()) + "] SetLock for uploading process")
 
 def ResetLock():
-	bashCommand = awsCli() + " storage rm "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/.lock"
+	bashCommand = awsCli() + " storage rm "+getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/.lock"
 	process = subprocess.Popen(bashCommand, universal_newlines=True, shell=True,stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 	output, error = process.communicate()
 	logging.info("[" + str(datetime.datetime.now()) + "] Removed lock for uploading process")
@@ -148,32 +165,71 @@ def SyncLocalToS3Persistence(blockNum,lastBlockNum):
 
 	# Try syncing S3 with latest persistence only if NUM_DSBLOCK blocks have crossed.
 	if ((blockNum + 1) % (NUM_DSBLOCK * NUM_FINAL_BLOCK_PER_POW) == 0 or lastBlockNum == 0):
-		bashCommand = awsCli() + " storage sync --delete temp/persistence "+ getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/persistence --exclude 'diagnosticNodes/*' --exclude 'diagnosticCoinb/*' "
+		bashCommand = awsCli() + " storage rsync --recursive --delete-unmatched-destination-objects temp/persistence " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence --exclude='diagnosticNodes/*|diagnosticCoinb/*' "
 		process = subprocess.Popen(bashCommand, universal_newlines=True, shell=True,stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 		output, error = process.communicate()
 		if re.match(r'^\s*$', output):
 			logging.warning("No entire persistence diff, interesting...")
 		else:
-			logging.info("Remote S3 bucket: "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/persistence is entirely Synced")
+			logging.info("Remote S3 bucket: "+getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence is entirely Synced")
 		# clear the state-delta bucket now.
 		if(lastBlockNum != 0):
 			CleanS3StateDeltas()
 			CleanS3PersistenceDiffs()
 	elif (result == 0):
 		# we still need to sync persistence except for state, stateroot, contractCode, contractStateData, contractStateIndex so that next time for next blocknum we can get statedelta diff and persistence diff correctly
-		bashCommand = awsCli() + " storage sync --delete temp/persistence "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/persistence --exclude '*' --include 'microBlockKeys/*' --include 'microBlocks*' --include 'dsBlocks/*' --include 'minerInfoDSComm/*' --include 'minerInfoShards/*' --include 'dsCommittee/*' --include 'shardStructure/*' --include 'txBlocks/*' --include 'VCBlocks/*' --include 'blockLinks/*' --include 'metaData/*' --include 'stateDelta/*' --include 'txEpochs/*' --include 'txBodies*' --include 'extSeedPubKeys/*' --include 'state_purge/*' --include 'contractTrie_purge/*' "
+        def ToExclude(inclusion):
+            exclusions = []
+            for index, char in enumerate(inclusion):
+                exclusions.append('.' * index + f'[^{char}]')
+
+            return '|'.join(exclusions)
+
+        inclusions = [
+            'microBlockKeys/',
+            'microBlocks',
+            'dsBlocks/',
+            'minerInfoDSComm/',
+            'minerInfoShards/',
+            'dsCommittee/',
+            'shardStructure/',
+            'txBlocks/',
+            'VCBlocks/',
+            'blockLinks/',
+            'metaData/',
+            'stateDelta/',
+            'txEpochs/',
+            'txBodies',
+            'extSeedPubKeys/',
+            'state_purge/',
+            'contractTrie_purge/'
+        ]
+
 		retry = 3
+        output = ''
+        for inclusion in inclusions:
+            while (retry):
+                bashCommand = awsCli() + " storage rsync --recursive --delete-unmatched-destination-objects temp/persistence " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence --exclude='" + ToExclude(inclusion) + "'"
+                try:
+                    process = subprocess.Popen(bashCommand, universal_newlines=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    rsync_output, error = process.communicate()
+                    if error:
+                        retry = retry - 1
+                        logging.info("Some error!!")
+                        time.sleep(SYNC_INTERVAL)
+                        continue
+                    output = output + rsync_output
+                    break
+                except Exception as e:
+                    retry = retry - 1
+                    logging.warning(e)
+                    time.sleep(SYNC_INTERVAL)
+                    pass
+
+        logging.info("Remote S3 bucket: " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence is Synced without state/stateRoot/contractCode/contractStateData/contractStateIndex")
 		while (retry):
 			try:
-				process = subprocess.Popen(bashCommand, universal_newlines=True, shell=True,stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-				str_diff_output, error = process.communicate()
-				if error:
-					retry = retry -1
-					logging.info("Some error!!")
-					time.sleep(SYNC_INTERVAL)
-					continue
-				logging.info("Remote S3 bucket: "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/persistence is Synced without state/stateRoot/contractCode/contractStateData/contractStateIndex")
-				#logging.info("str_diff_output: "+str_diff_output)
+				str_diff_output = output
 				if re.match(r'^\s*$', str_diff_output): # if output of sync command is either empty or just whitespaces
 					logging.warning("No persistence diff, interesting...")
 					tf = tarfile.open("diff_persistence_"+str(blockNum)+".tar.gz", mode="w:gz")
@@ -181,11 +237,11 @@ def SyncLocalToS3Persistence(blockNum,lastBlockNum):
 					t.type = tarfile.DIRTYPE
 					tf.addfile(t)
 					tf.close()
-					bashCommand = awsCli() + " storage cp diff_persistence_"+str(blockNum)+".tar.gz "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/diff_persistence_"+str(blockNum)+".tar.gz"
+					bashCommand = awsCli() + " storage cp diff_persistence_"+str(blockNum) + ".tar.gz "+getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/diff_persistence_"+str(blockNum) + ".tar.gz"
 					process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
 					output, error = process.communicate()
-					logging.info("DUMMY upload: persistence Diff for new txBlk :" + str(blockNum) + ") in Remote S3 bucket: "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+" is Synced")
-					os.remove("diff_persistence_"+str(blockNum)+".tar.gz")
+					logging.info("DUMMY upload: persistence Diff for new txBlk :" + str(blockNum) + ") in Remote S3 bucket: " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + " is Synced")
+					os.remove("diff_persistence_" + str(blockNum) + ".tar.gz")
 				else:
 					str_diff_output = str_diff_output.strip()
 					splitted = str_diff_output.split('\n')
@@ -194,20 +250,20 @@ def SyncLocalToS3Persistence(blockNum,lastBlockNum):
 						for x in splitted:
 							tok = x.split(' ')
 							# skip deleted files
-							if(len(tok) >= 3 and tok[0] == "upload:"):
-								result.append(tok[1])
+                            if (len(tok) >= 3 and tok[0] == "Copying" and tok[1].startswith('file://')):
+                                result.append(tok[1][7:])
 					if (len(result) > 0):
-						tf = tarfile.open("diff_persistence_"+str(blockNum)+".tar.gz", mode="w:gz")
+						tf = tarfile.open("diff_persistence_"+str(blockNum) + ".tar.gz", mode="w:gz")
 						for x in result:
 							#print(x)
-							tf.add(x,arcname="diff_persistence_"+str(blockNum)+"/"+ x.split("persistence/",1)[1]) 
+							tf.add(x,arcname="diff_persistence_"+str(blockNum) + "/"+ x.split("persistence/",1)[1]) 
 						tf.close()
-						bashCommand = awsCli() + " storage cp diff_persistence_"+str(blockNum)+".tar.gz "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/diff_persistence_"+str(blockNum)+".tar.gz"
+						bashCommand = awsCli() + " storage cp diff_persistence_"+str(blockNum) + ".tar.gz "+getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/diff_persistence_"+str(blockNum) + ".tar.gz"
 						process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
 						output, error = process.communicate()
-						logging.info("Persistence Diff for new txBlk :" + str(blockNum) + ") in Remote S3 bucket: "+getBucketString(PERSISTENCE_SNAPSHOT_NAME)+" is Synced without state/stateroot/contractCode/contractStateData/contractStateIndex")
-						os.remove("diff_persistence_"+str(blockNum)+".tar.gz")
-				break
+						logging.info("Persistence Diff for new txBlk :" + str(blockNum) + ") in Remote S3 bucket: "+getBucketString(PERSISTENCE_SNAPSHOT_NAME) + " is Synced without state/stateroot/contractCode/contractStateData/contractStateIndex")
+						os.remove("diff_persistence_"+str(blockNum) + ".tar.gz")
+                break
 			except Exception as e:
 				retry = retry -1
 				logging.warning(e)
@@ -237,7 +293,7 @@ def GetAndUploadStateDeltaDiff(blockNum, lastBlockNum):
 		return 0
 
 	# check if there is diff and buffer the diff_output
-	bashCommand = awsCli() + " storage sync --dryrun --delete temp/persistence/stateDelta "+ getBucketString(PERSISTENCE_SNAPSHOT_NAME)+"/persistence/stateDelta"
+	bashCommand = awsCli() + " storage rsync --dry-run --recursive --delete-unmatched-destination-objects temp/persistence/stateDelta " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence/stateDelta"
 	process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
 	diff_output, error = process.communicate()
 	str_diff_output = diff_output.decode("utf-8")
@@ -261,10 +317,10 @@ def GetAndUploadStateDeltaDiff(blockNum, lastBlockNum):
 	result=[]
 	if(len(splitted) > 0):
 		for x in splitted:
-			tok = x.split(' ');
+			tok = x.split(' ')
 			# skip deleted files
-			if(len(tok) >= 3 and tok[1] == "upload:"): 
-				result.append(tok[2])
+            if (len(tok) >= 3 and tok[0] == "Would" and tok[1] == "copy" and tok[2].startswith('file://')):
+                result.append(tok[2][7:])
 
 		tf = tarfile.open("stateDelta_"+str(blockNum)+".tar.gz", mode="w:gz")
 		for x in result:
@@ -285,24 +341,27 @@ def GetStaticFoldersFromS3(url, folderName):
     # Try get the entire persistence keys.
     # S3 limitation to get only max 1000 keys. so work around using marker.
     while True:
-        response = requests.get(url, params={"prefix":folderName, "max-keys":1000, "marker":MARKER, "delimiter":"/"})
+        response = requests.get(url, params={"prefix": folderName, "list-type": 1, "max-keys": 1000, "marker": MARKER, "delimiter": "/"})
         tree = ET.fromstring(response.text)
-        if(tree[6:] == []):
-            print("Empty response")
-            break
+        #  if(tree[6:] == []):
+            #  print("Empty response")
+            #  break
+        print("[" + str(datetime.datetime.now()) + "] Files to be downloaded:")
         lastkey = ''
-        for key in tree[6:]:
+        #for key in tree[6:]:
+        for key in tree.findall("{*}Contents"):
             # skip compressed blockchain-data file i.e. testnet-name.tar.gz
-            if ".tar.gz" in key[0].text:
+            key_url = key.find("{*}Key").text
+            if ".tar.gz" in key_url:
                 continue
-            key_url = key[0].text.split(folderName,1)[1].replace('/', '')
-            if key_url != '':
-                list_of_folders.append(key_url)
+            folder = key_url.split(folderName,1)[1].replace('/', '')
+            if folder != '':
+                list_of_folders.append(folder)
             lastkey = key[0].text
-        istruncated=tree[5].text
-        if istruncated == 'true':
+        is_truncated = tree.find('{*}IsTruncated').text
+        if is_truncated == 'true':
             MARKER=lastkey
-            print(istruncated)
+            print(is_truncated)
         else:
             break
     return list_of_folders
