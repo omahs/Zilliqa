@@ -19,6 +19,7 @@
 #include "ZilliqaUpdater.h"
 
 #include "common/Constants.h"
+#include "libPersistence/Downloader.h"
 #include "libUtils/Logger.h"
 
 #include <boost/program_options.hpp>
@@ -200,11 +201,38 @@ string ZilliqaDaemon::Execute(const string& cmd) {
   return result;
 }
 
-bool ZilliqaDaemon::DownloadPersistence() {
+bool ZilliqaDaemon::DownloadPersistence() try {
   string output;
   ZilliqaDaemon::LOG(m_log, "downloading persistence.");
+#if 0
   output = Execute("python3 " + m_curPath + download_incr_DB_script);
   return (output.find("Done!") != std::string::npos);
+#endif
+
+  auto bucketName = std::getenv("Z7A_BUCKET_NAME");
+  if (!bucketName) {
+    return false;
+  }
+
+  auto testnetName = std::getenv("Z7A_TESTNET_NAME");
+  if (!testnetName) {
+    return false;
+  }
+
+  const constexpr unsigned int DEFAULT_THREAD_COUNT = 10;
+  zil::persistence::Downloader persistenceDownloader{
+      STORAGE_PATH + "/", bucketName, testnetName, true, DEFAULT_THREAD_COUNT};
+
+  persistenceDownloader.Start();
+  return true;
+} catch (std::exception& e) {
+  ZilliqaDaemon::LOG(
+      m_log, std::string{"Failed to download persistence: "} + e.what());
+  return false;
+} catch (...) {
+  LOG_GENERAL(WARNING, "Unknown failure while downloading persistence");
+  ZilliqaDaemon::LOG(m_log, "Unknown failure while downloading persistence");
+  return false;
 }
 
 vector<pid_t> ZilliqaDaemon::GetProcIdByName(const string& procName) {
@@ -328,8 +356,8 @@ void ZilliqaDaemon::StartNewProcess(bool cleanPersistence) {
     // 1. Download Incremental DB Persistence
     // 2. Restart zilliqa with syncType 6
     while (!DownloadPersistence()) {
-      ZilliqaDaemon::LOG(
-          m_log, "Downloading persistence has failed. Will try again!");
+      ZilliqaDaemon::LOG(m_log,
+                         "Downloading persistence has failed. Will try again!");
       this_thread::sleep_for(chrono::seconds(10));
     }
 
@@ -408,13 +436,11 @@ void ZilliqaDaemon::StartScripts() {
   Exit(0);
 }
 
-void ZilliqaDaemon::Exit(int exitCode)
-{
+void ZilliqaDaemon::Exit(int exitCode) {
   // Since the updater uses the Logger and the daemon keeps fork-ing
   // we can't realy on exit() because it will hang when the logger
   // tries to shutdown (since the child won't have the same running threads).
-  if (m_updater)
-  {
+  if (m_updater) {
     m_log.flush();
     _exit(exitCode);
   }
