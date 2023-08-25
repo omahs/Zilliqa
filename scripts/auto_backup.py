@@ -29,11 +29,12 @@ from logging import handlers
 import requests
 import xml.etree.ElementTree as ET
 import multiprocessing
+import datetime
 
 TAG_NUM_FINAL_BLOCK_PER_POW = "NUM_FINAL_BLOCK_PER_POW"
 TESTNET_NAME= "TEST_NET_NAME"
 BUCKET_NAME='BUCKET_NAME'
-AWS_PERSISTENCE_LOCATION= "s3://"+BUCKET_NAME+"/persistence/"+TESTNET_NAME
+AWS_PERSISTENCE_LOCATION= "gs://"+BUCKET_NAME+"/persistence/"+TESTNET_NAME
 AWS_BLOCKCHAINDATA_FOLDERNAME= "blockchain-data/"+TESTNET_NAME+"/"
 AWS_ENDPOINT_URL=os.getenv("AWS_ENDPOINT_URL")
 
@@ -53,16 +54,16 @@ std_handler.setFormatter(FORMATTER)
 rootLogger.addHandler(std_handler)
 
 def awsS3Url():
-    if AWS_ENDPOINT_URL:
-        return f"{AWS_ENDPOINT_URL}/{BUCKET_NAME}"
-    else:
-        return "http://"+BUCKET_NAME+".s3.amazonaws.com"
+	if AWS_ENDPOINT_URL:
+		return f"{AWS_ENDPOINT_URL}/{BUCKET_NAME}"
+	else:
+		return "http://"+BUCKET_NAME+".storage.googleapis.com"
 
 def awsCli():
     if AWS_ENDPOINT_URL:
         return f"aws --endpoint-url={AWS_ENDPOINT_URL}"
     else:
-        return "aws"
+        return "gsutil"
 
 def setup_logging():
   if not os.path.exists(os.path.dirname(os.path.abspath(__file__)) + "/logs"):
@@ -134,7 +135,7 @@ def CreateTempPersistence():
     static_folders = GetStaticFoldersFromS3(awsS3Url(), AWS_BLOCKCHAINDATA_FOLDERNAME)
     exclusion_string = ' '.join(['--exclude ' + s for s in static_folders])
     bashCommand = "rsync --recursive --inplace --delete -a " + exclusion_string + " persistence tempbackup"
-    logging.info("Command = " + bashCommand)
+    logging.info(f"Executing: {bashCommand}")
     for i in range(2):
         process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
         output, error = process.communicate()
@@ -158,8 +159,8 @@ def backUp(curr_blockNum):
     except subprocess.CalledProcessError as e:
         print(f"Command failed with error code {e.returncode}: {e}")
 
-    os.system(awsCli() + " s3 cp " + TESTNET_NAME + ".tar.gz " + AWS_PERSISTENCE_LOCATION + ".tar.gz")
-    os.system(awsCli() + " s3 cp " + TESTNET_NAME + ".tar.gz " + AWS_PERSISTENCE_LOCATION +  "-" + str(curr_blockNum) + ".tar.gz")
+    os.system(awsCli() + " cp " + TESTNET_NAME + ".tar.gz " + AWS_PERSISTENCE_LOCATION + ".tar.gz")
+    os.system(awsCli() + " cp " + TESTNET_NAME + ".tar.gz " + AWS_PERSISTENCE_LOCATION +  "-" + str(curr_blockNum) + ".tar.gz")
     os.remove(TESTNET_NAME + ".tar.gz")
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     return None
@@ -170,21 +171,24 @@ def GetStaticFoldersFromS3(url, folderName):
     # Try get the entire persistence keys.
     # S3 limitation to get only max 1000 keys. so work around using marker.
     while True:
-        response = requests.get(url, params={"prefix":folderName, "max-keys":1000, "marker":MARKER, "delimiter":"/"})
+        response = requests.get(url, params={"prefix": folderName, "list-type": 1, "max-keys": 1000, "marker": MARKER, "delimiter": "/"})
         tree = ET.fromstring(response.text)
-        if(tree[6:] == []):
-            print("Empty response")
-            break
+        #  if(tree[6:] == []):
+            #  print("Empty response")
+            #  break
+        print("[" + str(datetime.datetime.now()) + "] Files to be downloaded:")
         lastkey = ''
-        for key in tree[6:]:
-            key_url = key[0].text.split(folderName,1)[1].replace('/', '')
-            if key_url != '':
-                list_of_folders.append(key_url)
-            lastkey = key[0].text
-        istruncated=tree[5].text
-        if istruncated == 'true':
+        for key in tree.findall("{*}Contents"):
+            key_url = key.find("{*}Key").text
+            #  key_url = key[0].text.split(folderName,1)[1].replace('/', '')
+            folder = key_url.split(folderName,1)[1].replace('/', '') if len(key_url) > 0 else ''
+            if folder != '':
+                list_of_folders.append(folder)
+            lastkey = key_url
+        is_truncated = tree.find('{*}IsTruncated').text
+        if is_truncated == 'true':
             MARKER=lastkey
-            print(istruncated)
+            print(is_truncated)
         else:
             break
     return list_of_folders

@@ -58,7 +58,7 @@ def awsS3Url():
     if AWS_ENDPOINT_URL:
         return f"{AWS_ENDPOINT_URL}/{BUCKET_NAME}"
     else:
-        return "https://"+BUCKET_NAME+".storage.googleapis.com"
+        return "http://"+BUCKET_NAME+".storage.googleapis.com"
 
 def awsCli():
     if AWS_ENDPOINT_URL:
@@ -183,7 +183,7 @@ def SyncLocalToS3Persistence(blockNum,lastBlockNum):
 
     # Try syncing S3 with latest persistence only if NUM_DSBLOCK blocks have crossed.
     if ((blockNum + 1) % (NUM_DSBLOCK * NUM_FINAL_BLOCK_PER_POW) == 0 or lastBlockNum == 0):
-        bashCommand = awsCli() + " rsync -m -r -d -x 'diagnosticNodes/|diagnosticCoinb/' temp/persistence " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence"
+        bashCommand = awsCli() + " -m rsync -r -d -x diagnosticNodes/|diagnosticCoinb/ temp/persistence " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence"
         logging.info(f"Executing: {bashCommand}")
         process = subprocess.Popen(bashCommand.split(), universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         output, error = process.communicate()
@@ -232,7 +232,7 @@ def SyncLocalToS3Persistence(blockNum,lastBlockNum):
         output = ''
         for inclusion in inclusions:
             while (retry):
-                bashCommand = awsCli() + " rsync -m -r -d -x '" + ToExclude(inclusion) + "' temp/persistence " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence"
+                bashCommand = awsCli() + " -m rsync -r -d -x " + ToExclude(inclusion) + " temp/persistence " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence"
                 try:
                     logging.info(f"Executing: {bashCommand}")
                     process = subprocess.Popen(bashCommand.split(), universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -339,7 +339,7 @@ def GetAndUploadStateDeltaDiff(blockNum, lastBlockNum):
         return 0
 
     # check if there is diff and buffer the diff_output
-    bashCommand = awsCli() + " rsync -m -n -r -d temp/persistence/stateDelta " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence/stateDelta"
+    bashCommand = awsCli() + " -m rsync -n -r -d temp/persistence/stateDelta " + getBucketString(PERSISTENCE_SNAPSHOT_NAME) + "/persistence/stateDelta"
     logging.info(f"Executing: {bashCommand}")
     process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
     diff_output, error = process.communicate()
@@ -417,10 +417,10 @@ def GetStaticFoldersFromS3(url, folderName):
             key_url = key.find("{*}Key").text
             if ".tar.gz" in key_url:
                 continue
-            folder = key_url.split(folderName,1)[1].replace('/', '')
+            folder = key_url.split(folderName,1)[1].replace('/', '') if len(key_url) > 0 else ''
             if folder != '':
                 list_of_folders.append(folder)
-            lastkey = key[0].text
+            lastkey = key_url
         is_truncated = tree.find('{*}IsTruncated').text
         if is_truncated == 'true':
             MARKER=lastkey
