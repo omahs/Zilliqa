@@ -387,7 +387,7 @@ def grafana_down(config):
     """ Let helm undeploy grafana """
     run_or_die(config, ["helm", "uninstall", "grafana"])
 
-def prometheus_up(config, testnet_name, count = 23):
+def prometheus_up(config, testnet_name, count = 22):
     """ Let helm deploy prometheus """
     ips = []
     while True:
